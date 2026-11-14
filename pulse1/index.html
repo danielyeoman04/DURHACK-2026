@@ -59,6 +59,7 @@
   .pending button { border: 0; border-radius: 8px; padding: 6px 12px; font: inherit; font-weight: 700; background: var(--accent2); color: #0b0d12; cursor: pointer; }
   .pending button:disabled { opacity: .4; cursor: default; }
   .pending button.ghost { background: none; color: var(--muted); font-weight: 500; }
+  .pending a { color: var(--accent); }
   footer { margin-top: 20px; color: var(--muted); font-size: 12px; text-align: center; }
 </style>
 </head>
@@ -110,6 +111,10 @@
     <div id="pending" class="pending" hidden>
       <b id="pendingTitle"></b>
       <ul id="pendingList"></ul>
+    </div>
+    <div id="saved" class="pending" hidden>
+      <b id="savedTitle"></b>
+      <ul id="savedList"></ul>
     </div>
     <ul id="history" class="history"></ul>
   </section>

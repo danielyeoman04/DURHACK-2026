@@ -3,6 +3,7 @@
   'use strict';
   const $ = id => document.getElementById(id);
   const P = window.Pulse;
+  const D = window.pulseDesktop || null;   // set by the desktop app (desktop/preload.js). null in a browser
   let ctx = null;
 
   function audio() {
@@ -184,6 +185,24 @@
       return li;
     }));
   }
+  // desktop app: every link heard is saved to a file by the app, and listed here to open at any time
+  function renderSaved(links) {
+    $('saved').hidden = false;
+    $('savedTitle').textContent = links.length ? `Saved links (${links.length})` : 'Links you receive are saved here';
+    $('savedList').replaceChildren(...links.map(l => {
+      const li = document.createElement('li');
+      const info = document.createElement('div');
+      const when = document.createElement('div'); when.className = 'meta'; when.style.margin = '0';
+      when.textContent = new Date(l.at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+      info.append(linkEl(l.url, l.url), when);
+      const go = document.createElement('button'); go.textContent = 'Open';
+      go.onclick = () => D.openLink(l.url);
+      const x = document.createElement('button'); x.textContent = 'Remove'; x.className = 'ghost';
+      x.onclick = () => D.removeLink(l.url);
+      li.append(info, go, x);
+      return li;
+    }));
+  }
   function removePending(i) { pending.splice(i, 1); store.set('pulse-pending', pending); renderPending(); }
 
   function renderNet() {
@@ -194,7 +213,7 @@
 
   function onMessage(text) {
     const url = P.safeUrl(text);
-    const offline = !navigator.onLine;
+    const offline = !D && !navigator.onLine;   // the desktop app saves every link, online or not
     setProgress(1);
     $('result').hidden = false;
     $('resUrl').textContent = text;
@@ -202,13 +221,14 @@
     if (url) $('resOpen').href = url;
     if (!url) setStatus('Received text (not a web link)', '');
     else if (offline) setStatus("You're offline, so the link is saved. It'll open when you're back online.", '');
-    else setStatus('Received a website', '');
+    else setStatus(D ? 'Received a website. It is saved in your links below.' : 'Received a website', '');
 
     if (history[0] && history[0].text === text && Date.now() - history[0].at < 60000) return;   // same repeat again
     history.unshift({ text, at: Date.now() }); history.length = Math.min(history.length, 20);
     store.set('pulse-history', history); renderHistory();
     if (navigator.vibrate) navigator.vibrate(80);
     if (!url) return;
+    if (D) { D.addLink(url); return; }   // saved and announced by the desktop app. Never opens by itself
     if (offline) {
       if (!pending.some(p => p.url === url)) { pending.push({ text, url, at: Date.now() }); store.set('pulse-pending', pending); }
       renderPending();
@@ -230,7 +250,10 @@
     }
   });
 
+  let starting = false;
   async function startListening() {
+    if (starting || node) return;
+    starting = true;
     const ac = audio();
     try {
       stream = await navigator.mediaDevices.getUserMedia({
@@ -238,15 +261,21 @@
         audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
       });
     } catch (e) {
-      setStatus(location.protocol === 'https:' || location.hostname === 'localhost'
+      starting = false;
+      setStatus(D ? 'No microphone access. Check a microphone is connected and allowed in your system privacy settings.'
+        : location.protocol === 'https:' || location.hostname === 'localhost'
         ? 'Microphone permission was denied' : 'Microphone needs https:// (or localhost)', 'err');
       return;
     }
+    starting = false;
     mic = ac.createMediaStreamSource(stream);
     // ScriptProcessor gives us raw samples on the main thread; simple and works everywhere
     node = ac.createScriptProcessor(2048, 1, 1);
     decoder = new P.Decoder(ac.sampleRate, {
-      onFrame: (lv, tone) => frames.push({ lv: Float32Array.from(lv), tone }),
+      onFrame: (lv, tone) => {
+        frames.push({ lv: Float32Array.from(lv), tone });
+        if (frames.length > 600) frames.splice(0, frames.length - 600);   // nothing draws while the window is hidden
+      },
       onProgress: (done, total) => {
         setStatus(total ? `Receiving… ${Math.round(done / total * 100)}%` : 'Receiving…', '');
         setProgress(total ? done / total : 0.02);
@@ -264,6 +293,7 @@
     $('listen').textContent = 'Stop listening'; $('listen').classList.add('stop');
     const loop = () => { drawWaterfall(); if (node) requestAnimationFrame(loop); };
     loop();
+    if (D) D.setListening(true);
   }
 
   function stopListening() {
@@ -273,6 +303,7 @@
     decoder = null; frames = [];
     $('listen').textContent = 'Start listening'; $('listen').classList.remove('stop');
     if (!$('status').classList.contains('err')) setStatus('Microphone off', '');
+    if (D) D.setListening(false);
   }
 
   $('listen').onclick = () => (node ? stopListening() : startListening());
@@ -289,6 +320,16 @@
   if (pending.length && navigator.onLine) show('recv');
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
+  if (D) {
+    // desktop app: links are saved and listed, never opened automatically. Start on Receive, already listening
+    $('auto').closest('label').style.display = 'none';
+    $('history').hidden = true;
+    D.onLinksChanged(renderSaved);
+    D.listLinks().then(renderSaved);
+    D.onToggleListening(() => { if (node) stopListening(); else { show('recv'); startListening(); } });
+    show('recv');
+    startListening();
   }
   window.addEventListener('resize', () => { drawScore(null); if (wctx) initWaterfall(); });
 })();

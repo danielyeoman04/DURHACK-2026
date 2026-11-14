@@ -11,7 +11,7 @@
 ## Index
 | ID | Title | Status | Date |
 |----|-------|--------|------|
-| D-001 | Example: use Python + FastAPI for the backend | Accepted | 2026-11-14 |
+| D-001 | Desktop app: Electron wrapper around pulse1, built locally | Accepted | 2026-11-14 |
 
 ---
 
@@ -31,11 +31,11 @@ Copy this block to the top of the log, below this line, for each new decision.
 
 ---
 
-### D-001: Example: use Python + FastAPI for the backend
+### D-001: Desktop app: Electron wrapper around pulse1, built locally
 - **Date:** 2026-11-14
 - **Status:** Accepted
-- **Decided by:** <names>
-- **Context:** Need a quick API with minimal setup; the team all knows Python.
-- **Decision:** Backend is Python with FastAPI. Delete this example once real entries exist.
-- **Alternatives considered:** Node/Express (less team familiarity); Flask (fewer built-in docs and validation).
-- **Consequences:** Pydantic models define the API schema; frontend consumes the generated OpenAPI spec.
+- **Decided by:** Daniel
+- **Context:** We want Pulse to listen in the background on Windows and Mac and keep the links it hears. A browser tab can't do that. The deadline is noon on 2026-11-15.
+- **Decision:** `desktop/` is an Electron app that loads `pulse1/index.html` unchanged. It lives in the tray, saves every received link to a JSON file, shows a notification, and opens a link in the default browser only when the user clicks. No launch-at-login. Installers are built locally on each OS with electron-builder and are unsigned.
+- **Alternatives considered:** Tauri (smaller installer, but needs Rust and the Mac webview's microphone support is less reliable); auto-opening links on receive (disruptive in a lecture); building with GitHub Actions (we have an issue with Actions).
+- **Consequences:** `pulse1/app.js` has desktop-only branches behind `window.pulseDesktop`. The web version is unchanged. The Mac `.dmg` must be built on a Mac. Users see an unsigned-app warning on first launch. Installers are about 110 MB.
