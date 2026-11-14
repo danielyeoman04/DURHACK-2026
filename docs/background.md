@@ -26,7 +26,7 @@ Receiving users: people at lecture style events/ events in general
 ## Goals
 <!-- What must exist for this to count as a success? Be concrete and testable. -->
 1. A sending and receiving platform that allows users to easily pass information via the medium of sound.
-2  A big focus is on the robustness. We want it to work in large lecture theatres and be able to understand the uniqueness.
+2  A big focus is on the robustness. We want it to work in large lecture theatres.
 3. Make this process compatibile with all websites, work offline in addition to online.
 
 ## Non-goals
