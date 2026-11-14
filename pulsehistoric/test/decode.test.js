@@ -59,8 +59,8 @@ function room(x, sr, echoes = [[0.011, 0.5], [0.023, 0.35], [0.041, 0.25], [0.06
 }
 
 /** snrDb: signal RMS vs noise RMS over the whole recording (broadband, like a real room) */
-function trial(text, mode, speed, { snrDb = 100, noise = 'babble', sr = 48000, txSr = 48000, drift = 1, plays = 2, echo = true, chunk = 2048 }) {
-  const segs = P.encode(text, { mode, speed });
+function trial(text, speed, { snrDb = 100, noise = 'babble', sr = 48000, txSr = 48000, drift = 1, plays = 2, echo = true, chunk = 2048 }) {
+  const segs = P.encode(text, speed);
   let one = P.synthesize(segs, txSr, { tailMs: 600 });
   one = resample(one, sr / txSr * drift);
   if (echo) one = room(one, sr);
@@ -69,14 +69,14 @@ function trial(text, mode, speed, { snrDb = 100, noise = 'babble', sr = 48000, t
   const n = parts.reduce((a, p) => a + p.length, 0), x = new Float32Array(n); let o = 0; for (const p of parts) { x.set(p, o); o += p.length; }
   const sig = rms(one);
   if (snrDb < 100) {
-    const nz = noise === 'white' ? white(n) : noise === 'music' ? music(n, sr) : noise === 'whistle' ? whistle(n, sr, P.MODES[mode || 'standard'].freqs[5]) : noise === 'mix' ? addAll(babble(n, sr), music(n, sr)) : babble(n, sr);
+    const nz = noise === 'white' ? white(n) : noise === 'music' ? music(n, sr) : noise === 'whistle' ? whistle(n, sr, P.toneFreq(5)) : noise === 'mix' ? addAll(babble(n, sr), music(n, sr)) : babble(n, sr);
     const g = sig / rms(nz) / Math.pow(10, snrDb / 20);
     for (let i = 0; i < n; i++) x[i] += nz[i] * g;
   }
-  const got = [], modes = [];
-  const d = new P.MultiDecoder(sr, { onMessage: (m, md) => { got.push(m); modes.push(md); } });
+  const got = [];
+  const d = new P.Decoder(sr, { onMessage: m => got.push(m) });
   for (let i = 0; i < n; i += chunk) d.push(x.subarray(i, i + chunk));
-  return { ok: got.length > 0 && got.every(m => m === text) && modes.every(md => md === (mode || 'standard')), count: got.length, secs: P.durationMs(segs) / 1000 };
+  return { ok: got.length > 0 && got.every(m => m === text), count: got.length, secs: P.durationMs(segs) / 1000 };
 }
 function addAll(a, b) { const ra = rms(a), rb = rms(b); for (let i = 0; i < a.length; i++) a[i] = a[i] / ra + b[i] / rb; return a; }
 
@@ -86,24 +86,23 @@ if (require.main === module) {
   const url = 'https://durhack.com/';
   const long = 'https://example.org/some/really/long/path?with=query&and=more&utf8=héllo-✓';
   const cases = [
-    ['high: clean', url, 'high', 'normal', {}],
-    ['high: fast', url, 'high', 'fast', {}],
-    ['high: slow, long + UTF-8', long, 'high', 'slow', {}],
-    ['high: 44.1k phone -> 48k laptop', url, 'high', 'normal', { txSr: 44100 }],
-    ['high: 48k -> 44.1k + 0.2% drift', url, 'high', 'normal', { sr: 44100, drift: 1.002 }],
-    ['high: white noise -10 dB', url, 'high', 'normal', { snrDb: -10, noise: 'white' }],
-    ['high: babble + music -10 dB', url, 'high', 'normal', { snrDb: -10, noise: 'mix' }],
-    ['whale: clean', url, 'whale', 'normal', {}],
-    ['whale: fast', url, 'whale', 'fast', {}],
-    ['whale: 0.2% clock drift', url, 'whale', 'normal', { sr: 44100, drift: 1.002 }],
-    ['whale: babble 0 dB', url, 'whale', 'normal', { snrDb: 0 }],
-    ['whale: babble + music -5 dB', url, 'whale', 'normal', { snrDb: -5, noise: 'mix' }],
-    ['standard: babble + music -10 dB', url, 'standard', 'normal', { snrDb: -10, noise: 'mix' }],
-    ['child: clean', url, 'child', 'normal', {}],
+    ['clean, normal', url, 'normal', {}],
+    ['clean, fast', url, 'fast', {}],
+    ['clean, slow, long + UTF-8', long, 'slow', {}],
+    ['44.1k phone -> 48k laptop', url, 'normal', { txSr: 44100 }],
+    ['48k -> 44.1k + 0.2% clock drift', url, 'normal', { sr: 44100, drift: 1.002 }],
+    ['one play only, babble 0 dB', url, 'normal', { snrDb: 0, plays: 1 }],
+    ['crowd babble, -6 dB SNR', url, 'normal', { snrDb: -6 }],
+    ['music, -6 dB SNR', url, 'normal', { snrDb: -6, noise: 'music' }],
+    ['babble + music, -6 dB SNR', url, 'normal', { snrDb: -6, noise: 'mix' }],
+    ['loud whistle on a data tone, -10 dB', url, 'normal', { snrDb: -10, noise: 'whistle' }],
+    ['white noise, -10 dB SNR', url, 'normal', { snrDb: -10, noise: 'white' }],
+    ['babble, -10 dB SNR, slow', url, 'slow', { snrDb: -10 }],
+    ['tiny chunks (128)', url, 'normal', { chunk: 128 }],
   ];
   let pass = 0;
-  for (const [name, text, mode, speed, opt] of cases) {
-    const r = trial(text, mode, speed, opt); if (r.ok) pass++;
+  for (const [name, text, speed, opt] of cases) {
+    const r = trial(text, speed, opt); if (r.ok) pass++;
     console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${name.padEnd(38)} decoded ${r.count}/${opt.plays || 2} plays  (${r.secs.toFixed(1)} s per play)`);
   }
   console.log(`\n${pass}/${cases.length} passed`);

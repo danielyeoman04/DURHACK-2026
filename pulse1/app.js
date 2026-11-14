@@ -1,9 +1,8 @@
-/* Pulse web app: Send (play URL as sound) and Receive (decode from mic). */
+/* Pulse4 web app: Send (link -> sound + QR) and Receive (mic -> link). */
 (function () {
   'use strict';
   const $ = id => document.getElementById(id);
   const P = window.Pulse;
-  const D = window.pulseDesktop || null;   // set by the desktop app (desktop/preload.js). null in a browser
   let ctx = null;
 
   function audio() {
@@ -11,67 +10,97 @@
     if (ctx.state === 'suspended') ctx.resume();
     return ctx;
   }
+  const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+  const store = {
+    get(k, d) { try { const v = JSON.parse(localStorage.getItem(k)); return v ?? d; } catch (e) { return d; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
+  };
 
   // ---------- tabs ----------
   function show(which) {
-    $('tab-send').classList.toggle('on', which === 'send');
-    $('tab-recv').classList.toggle('on', which === 'recv');
+    $('tab-send').setAttribute('aria-selected', which === 'send');
+    $('tab-recv').setAttribute('aria-selected', which === 'recv');
     $('send').hidden = which !== 'send';
     $('recv').hidden = which !== 'recv';
     if (which !== 'send') stopPlaying();
     if (which !== 'recv') stopListening();
-    try { localStorage.setItem('pulse-tab', which); } catch (e) {}
+    store.set('pulse4-tab', which);
+    if (which === 'send') drawScore(null);
   }
   $('tab-send').onclick = () => show('send');
   $('tab-recv').onclick = () => show('recv');
 
   function sizeCanvas(c) {
-    const dpr = window.devicePixelRatio || 1;
-    const w = c.clientWidth, h = parseInt(c.dataset.h, 10);
-    c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
-    c.style.height = h + 'px';
+    const dpr = window.devicePixelRatio || 1, w = c.clientWidth, h = parseInt(c.dataset.h, 10);
+    c.width = Math.round(w * dpr); c.height = Math.round(h * dpr); c.style.height = h + 'px';
     const g = c.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0);
     return { g, w, h };
   }
 
-  // ---------- send ----------
-  for (const [k, v] of Object.entries(P.SPEEDS)) {
-    const o = document.createElement('option'); o.value = k; o.textContent = v.label;
-    if (k === P.DEFAULT_SPEED) o.selected = true;
-    $('speed').appendChild(o);
+  // ---------- segmented controls ----------
+  function segmented(el, options, value, onChange) {
+    el.replaceChildren(...options.map(([v, label]) => {
+      const b = document.createElement('button'); b.type = 'button'; b.textContent = label; b.dataset.v = v;
+      b.setAttribute('aria-pressed', v === value);
+      b.onclick = () => { for (const x of el.children) x.setAttribute('aria-pressed', x === b); onChange(v); };
+      return b;
+    }));
   }
+  // Modes shown in the app (the engine also has 'standard', 'child' and 'whale'; add them here to bring them back)
+  const VISIBLE = ['high'];
+  const PLAYS = 5;
+  const HINTS = {
+    standard: 'Clear tones. Best in loud rooms.',
+    child: 'Plays a short melody.',
+    whale: 'A deep, gliding whale song.',
+    high: 'The link plays near-silently at 19–20.5 kHz. Keep devices close.',
+  };
+  const settings = store.get('pulse4-send', { mode: VISIBLE[0], speed: 'normal' });
+  if (!VISIBLE.includes(settings.mode)) settings.mode = VISIBLE[0];
+  $('modeField').hidden = VISIBLE.length < 2;
+  segmented($('mode'), VISIBLE.map(n => [n, P.MODES[n].label]), settings.mode, v => { settings.mode = v; changed(); });
+  segmented($('speed'), [['fast', 'Fast'], ['normal', 'Normal'], ['slow', 'Slow']], settings.speed, v => { settings.speed = v; changed(); });
+  function changed() { store.set('pulse4-send', settings); if (source) stopPlaying(); update(); }
 
+  // ---------- send ----------
   let source = null, segs = null, playStart = 0, playDur = 0, raf = 0;
 
-  function currentSegs() {
-    const text = $('url').value.trim();
-    return P.encode(text, $('speed').value);
-  }
-
+  // Two "staves": the hidden 19–20.5 kHz link on top, Für Elise underneath
   function drawScore(progress) {
-    const c = $('score'); const { g, w, h } = sizeCanvas(c);
+    const c = $('score'); if (!c.clientWidth) return;
+    const { g, w, h } = sizeCanvas(c);
     g.clearRect(0, 0, w, h);
     if (!segs) return;
-    const total = P.durationMs(segs);
+    const m = P.MODES[segs.mode], total = P.durationMs(segs), fg = css('--fg'), muted = css('--muted');
+    const split = $('melody').checked ? Math.round(h * 0.42) : h;
+    const alpha = t => (progress == null || t / total <= progress ? 1 : 0.25);
     let t = 0;
     for (const s of segs) {
-      const x = t / total * w, sw = Math.max(1, s.ms / total * w);
-      const y = h - 8 - (s.tone + 1) / (P.NUM_TONES + 1) * (h - 16);
-      g.fillStyle = s.tone >= P.START ? '#a78bfa' : '#5eead4';
-      g.fillRect(x, y - 2, sw, 4);
+      const x = t / total * w, sw = Math.max(1, s.ms / total * w - 1);
+      const y = split - 8 - (s.tone + 0.5) / m.numTones * (split - 16);
+      g.fillStyle = s.tone >= m.START ? muted : fg; g.globalAlpha = alpha(t);
+      g.fillRect(x, y - 1, sw, 2);
       t += s.ms;
     }
-    if (progress != null) {
-      g.fillStyle = 'rgba(255,255,255,.08)'; g.fillRect(0, 0, progress * w, h);
-      g.fillStyle = '#fff'; g.fillRect(progress * w, 0, 1.5, h);
+    if (split < h) {
+      g.globalAlpha = 1; g.fillStyle = css('--line'); g.fillRect(0, split + 4, w, 1);
+      const step = total / P.FUR_ELISE.steps, lo = 38, hi = 78;
+      for (const [k, note, hand] of P.FUR_ELISE.notes) {
+        const len = (k === 25 ? 2 : (P.FUR_ELISE.notes.find(n => n[0] > k && n[2] === hand) || [P.FUR_ELISE.steps])[0] - k) * step;
+        const x = k * step / total * w, y = h - 6 - (note - lo) / (hi - lo) * (h - split - 16);
+        g.globalAlpha = alpha(k * step) * (hand === 'L' ? 0.45 : 1); g.fillStyle = fg;
+        g.fillRect(x, y - 2, Math.max(3, len / total * w - 2), 4);
+      }
     }
+    g.globalAlpha = 1;
   }
 
-  function updateSendMeta() {
+  function update() {
+    $('modeHint').textContent = HINTS[settings.mode];
     try {
-      segs = currentSegs();
-      const bytes = P.utf8Encode($('url').value.trim()).length;
-      $('sendMeta').textContent = `${bytes} bytes · ${(P.durationMs(segs) / 1000).toFixed(1)} s per play · ${segs.length - 2} tones`;
+      segs = P.encode($('url').value.trim(), { mode: settings.mode, speed: settings.speed });
+      $('sendMeta').textContent = `${(P.durationMs(segs) / 1000).toFixed(1)} s × ${PLAYS}`;
       $('sendMeta').classList.remove('err');
       $('play').disabled = false;
     } catch (e) {
@@ -80,220 +109,213 @@
       $('play').disabled = !source;
     }
     drawScore(null);
+    drawQr();
   }
-  $('url').addEventListener('input', updateSendMeta);
-  $('speed').addEventListener('change', updateSendMeta);
+  $('url').addEventListener('input', () => { if (source) stopPlaying(); update(); });
+  $('melody').addEventListener('change', () => { if (source) stopPlaying(); store.set('pulse4-melody', $('melody').checked); drawScore(null); });
+  $('needMelody').addEventListener('change', () => store.set('pulse4-needMelody', $('needMelody').checked));
+  $('melody').checked = store.get('pulse4-melody', true);
+  $('needMelody').checked = store.get('pulse4-needMelody', true);
 
   function stopPlaying() {
     if (source) { try { source.stop(); } catch (e) {} source = null; }
     cancelAnimationFrame(raf);
-    $('play').textContent = 'Play sound'; $('play').classList.remove('stop');
+    $('play').textContent = 'Play'; $('play').classList.remove('on');
     drawScore(null);
   }
 
   $('play').onclick = () => {
     if (source) { stopPlaying(); return; }
-    updateSendMeta();
+    update();
     if (!segs) return;
     const ac = audio();
-    const loop = $('loop').checked;
-    const samples = P.synthesize(segs, ac.sampleRate, { amplitude: parseFloat($('vol').value), tailMs: loop ? 600 : 80 });
-    const buf = ac.createBuffer(1, samples.length, ac.sampleRate);
-    buf.copyToChannel(samples, 0);
+    const m = P.MODES[settings.mode];
+    if (m.freqs[m.freqs.length - 1] > ac.sampleRate * 0.47) {
+      $('sendMeta').textContent = 'This device can’t play this sound.'; $('sendMeta').classList.add('err'); return;
+    }
+    // one buffer: the message PLAYS times with short gaps, then it stops by itself. Fixed level; use the device volume.
+    const one = P.synthesize(segs, ac.sampleRate, { tailMs: 350, amplitude: $('melody').checked ? 0.75 : 1 });
+    if ($('melody').checked) {
+      // Für Elise, timed so the 4 bars last exactly as long as the hidden link
+      const mel = P.synthesizeMelody(P.durationMs(segs), ac.sampleRate, 0.3), off = Math.round(ac.sampleRate * 0.08);
+      for (let i = 0; i < mel.length && off + i < one.length; i++) one[off + i] += mel[i];
+    }
+    const buf = ac.createBuffer(1, one.length * PLAYS, ac.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let k = 0; k < PLAYS; k++) data.set(one, k * one.length);
     source = ac.createBufferSource();
-    source.buffer = buf; source.loop = loop;
+    source.buffer = buf;
     source.connect(ac.destination);
-    source.onended = () => { if (!loop) stopPlaying(); };
+    source.onended = () => stopPlaying();
     source.start();
-    playStart = ac.currentTime; playDur = buf.duration;
-    $('play').textContent = 'Stop'; $('play').classList.add('stop');
+    playStart = ac.currentTime; playDur = one.length / ac.sampleRate;
+    $('play').classList.add('on');
     const lead = 0.08, body = P.durationMs(segs) / 1000;
     const tick = () => {
-      const t = (ac.currentTime - playStart) % playDur - lead;
+      const el = ac.currentTime - playStart, n = Math.min(PLAYS, Math.floor(el / playDur) + 1), t = el % playDur - lead;
+      $('play').textContent = `Stop · ${n}/${PLAYS}`;
       drawScore(Math.min(1, Math.max(0, t / body)));
       raf = requestAnimationFrame(tick);
     };
     tick();
   };
 
-  // ---------- receive ----------
-  let stream = null, node = null, mic = null, decoder = null, waterfall = null, wctx = null;
+  // ---------- QR code (bundled library, works offline) ----------
+  function qrSvg(text) {
+    if (!window.qrcode) return null;
+    try {
+      qrcode.stringToBytes = qrcode.stringToBytesFuncs['UTF-8'];
+      const q = qrcode(0, 'M'); q.addData(text); q.make();
+      const n = q.getModuleCount();
+      let d = '';
+      for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if (q.isDark(y, x)) d += `M${x} ${y}h1v1h-1z`;
+      return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-2 -2 ${n + 4} ${n + 4}" shape-rendering="crispEdges"><rect x="-2" y="-2" width="${n + 4}" height="${n + 4}" fill="#fff"/><path d="${d}" fill="#000"/></svg>`;
+    } catch (e) { return null; }
+  }
+  function drawQr() {
+    const text = $('url').value.trim();
+    const svg = text ? qrSvg(P.safeUrl(text) || text) : null;
+    $('qr').hidden = !svg;
+    $('qrBtn').innerHTML = svg || '';
+    $('qrFull').firstElementChild.innerHTML = svg || '';
+  }
+  $('qrBtn').onclick = () => { $('qrFull').hidden = false; };
+  $('qrFull').onclick = () => { $('qrFull').hidden = true; };
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') $('qrFull').hidden = true; });
 
-  function setStatus(text, cls) { $('status').textContent = text; $('status').className = 'status' + (cls ? ' ' + cls : ''); }
+  // ---------- receive ----------
+  let stream = null, node = null, mic = null, decoder = null, wctx = null, frames = [], visMode = VISIBLE[0];
+
+  function setStatus(text, err) { $('status').textContent = text; $('status').className = 'status' + (err ? ' err' : ''); }
   function setProgress(f) { $('prog').style.width = (f * 100).toFixed(1) + '%'; }
 
   function initWaterfall() {
     const c = $('spec'); const { g, w, h } = sizeCanvas(c);
-    g.fillStyle = '#0b0d12'; g.fillRect(0, 0, w, h);
+    g.fillStyle = css('--soft'); g.fillRect(0, 0, w, h);
     wctx = { g, w, h };
   }
 
-  // queue frames from the audio callback, draw them on animation frames
-  let frames = [];
   function drawWaterfall() {
-    if (!wctx) return;
-    const { g, w, h } = wctx;
-    const n = frames.length; if (!n) return;
-    const colW = 2;
-    const shift = Math.min(w, n * colW);
-    const dpr = window.devicePixelRatio || 1;
+    if (!wctx || !frames.length) return;
+    const { g, w, h } = wctx, colW = 2, dpr = window.devicePixelRatio || 1;
+    const list = frames.slice(-Math.ceil(w / colW)); frames = [];
+    const shift = Math.min(w, list.length * colW);
     g.drawImage(g.canvas, shift * dpr, 0, (w - shift) * dpr, h * dpr, 0, 0, w - shift, h);
-    const rowH = h / P.NUM_TONES;
-    frames.slice(-Math.ceil(w / colW)).forEach((f, i) => {
+    const m = P.MODES[visMode], rowH = h / m.numTones, bg = css('--soft'), fg = css('--fg'), muted = css('--muted');
+    list.forEach((f, i) => {
       const x = w - shift + i * colW;
-      g.fillStyle = '#0b0d12'; g.fillRect(x, 0, colW, h);
-      for (let k = 0; k < P.NUM_TONES; k++) {
-        const v = Math.min(1, Math.log(Math.max(1, f.lv[k])) / Math.log(40)) * 0.8;
+      g.globalAlpha = 1; g.fillStyle = bg; g.fillRect(x, 0, colW, h);
+      for (let k = 0; k < m.numTones; k++) {
         const y = h - (k + 1) * rowH;
-        if (k === f.tone) g.fillStyle = k >= P.START ? '#a78bfa' : '#5eead4';
-        else g.fillStyle = `rgba(139,147,167,${(v * 0.8).toFixed(3)})`;
+        if (k === f.tone) { g.globalAlpha = 1; g.fillStyle = k >= m.START ? muted : fg; }
+        else { g.globalAlpha = Math.min(1, Math.log(Math.max(1, f.lv[k])) / Math.log(40)) * 0.35; g.fillStyle = fg; }
         g.fillRect(x, y + 0.5, colW, rowH - 1);
       }
     });
-    frames = [];
+    g.globalAlpha = 1;
   }
 
-  // ---------- saved links + history (kept on the device, so they survive going offline or closing the app) ----------
-  const store = {
-    get(k) { try { return JSON.parse(localStorage.getItem(k)) || []; } catch (e) { return []; } },
-    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
-  };
-  const history = store.get('pulse-history');
-  let pending = store.get('pulse-pending');          // links heard while offline, waiting to be opened
+  // saved links (heard while offline) and recent history, kept on the device
+  const history = store.get('pulse4-history', []);
+  const pending = store.get('pulse4-pending', []);
 
   function linkEl(text, url) {
     if (!url) { const sp = document.createElement('span'); sp.textContent = text; return sp; }
     const a = document.createElement('a'); a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.textContent = text; return a;
   }
   function renderHistory() {
+    $('recent').hidden = history.length === 0;
     $('history').replaceChildren(...history.map(h => { const li = document.createElement('li'); li.appendChild(linkEl(h.text, P.safeUrl(h.text))); return li; }));
   }
   function renderPending() {
     const online = navigator.onLine;
     $('pending').hidden = pending.length === 0;
-    $('pendingTitle').textContent = online
-      ? `You're back online. ${pending.length === 1 ? '1 saved link is' : pending.length + ' saved links are'} ready to open`
-      : `Saved while offline (${pending.length}). They'll open when you're back online`;
+    $('pendingTitle').textContent = online ? 'Saved while offline' : 'Saved. Opens when you’re back online';
     $('pendingList').replaceChildren(...pending.map((p, i) => {
       const li = document.createElement('li');
       li.appendChild(linkEl(p.text, p.url));
       const go = document.createElement('button'); go.textContent = 'Open'; go.disabled = !online;
       go.onclick = () => { removePending(i); location.href = p.url; };
-      const x = document.createElement('button'); x.textContent = 'Remove'; x.className = 'ghost';
+      const x = document.createElement('button'); x.textContent = 'Remove'; x.className = 'quiet';
       x.onclick = () => removePending(i);
       li.append(go, x);
       return li;
     }));
   }
-  // desktop app: every link heard is saved to a file by the app, and listed here to open at any time
-  function renderSaved(links) {
-    $('saved').hidden = false;
-    $('savedTitle').textContent = links.length ? `Saved links (${links.length})` : 'Links you receive are saved here';
-    $('savedList').replaceChildren(...links.map(l => {
-      const li = document.createElement('li');
-      const info = document.createElement('div');
-      const when = document.createElement('div'); when.className = 'meta'; when.style.margin = '0';
-      when.textContent = new Date(l.at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
-      info.append(linkEl(l.url, l.url), when);
-      const go = document.createElement('button'); go.textContent = 'Open';
-      go.onclick = () => D.openLink(l.url);
-      const x = document.createElement('button'); x.textContent = 'Remove'; x.className = 'ghost';
-      x.onclick = () => D.removeLink(l.url);
-      li.append(info, go, x);
-      return li;
-    }));
-  }
-  function removePending(i) { pending.splice(i, 1); store.set('pulse-pending', pending); renderPending(); }
+  function removePending(i) { pending.splice(i, 1); store.set('pulse4-pending', pending); renderPending(); }
+  function renderNet() { $('net').hidden = navigator.onLine; renderPending(); }
 
-  function renderNet() {
-    $('net').textContent = navigator.onLine ? '' : 'Offline';
-    $('net').hidden = navigator.onLine;
-    renderPending();
-  }
-
-  function onMessage(text) {
-    const url = P.safeUrl(text);
-    const offline = !D && !navigator.onLine;   // the desktop app saves every link, online or not
+  function onMessage(text, mode, info) {
+    const heard = !!(info && info.melody && info.melody.heard);
+    if ($('needMelody').checked && !heard) {
+      setStatus('Heard a link, but not Für Elise, so it was ignored.', true); setProgress(0);
+      return;
+    }
+    $('resMelody').textContent = heard ? 'Played with Für Elise' : '';
+    const url = P.safeUrl(text), offline = !navigator.onLine;
     setProgress(1);
     $('result').hidden = false;
     $('resUrl').textContent = text;
     $('resOpen').hidden = !url || offline;
     if (url) $('resOpen').href = url;
-    if (!url) setStatus('Received text (not a web link)', '');
-    else if (offline) setStatus("You're offline, so the link is saved. It'll open when you're back online.", '');
-    else setStatus(D ? 'Received a website. It is saved in your links below.' : 'Received a website', '');
+    setStatus(!url ? 'Received text' : offline ? 'Saved. Opens when you’re back online.' : 'Received');
 
-    if (history[0] && history[0].text === text && Date.now() - history[0].at < 60000) return;   // same repeat again
-    history.unshift({ text, at: Date.now() }); history.length = Math.min(history.length, 20);
-    store.set('pulse-history', history); renderHistory();
-    if (navigator.vibrate) navigator.vibrate(80);
+    if (history[0] && history[0].text === text && Date.now() - history[0].at < 60000) return;   // a repeat of the same sound
+    history.unshift({ text, mode, at: Date.now() }); history.length = Math.min(history.length, 20);
+    store.set('pulse4-history', history); renderHistory();
+    if (navigator.vibrate) navigator.vibrate(60);
     if (!url) return;
-    if (D) { D.addLink(url); return; }   // saved and announced by the desktop app. Never opens by itself
     if (offline) {
-      if (!pending.some(p => p.url === url)) { pending.push({ text, url, at: Date.now() }); store.set('pulse-pending', pending); }
+      if (!pending.some(p => p.url === url)) { pending.push({ text, url, at: Date.now() }); store.set('pulse4-pending', pending); }
       renderPending();
     } else if ($('auto').checked) {
-      // open in this tab, like a QR scanner does. Pop-ups opened without a tap get blocked, especially on phones
-      setStatus('Opening website…', '');
-      setTimeout(() => { stopListening(); location.href = url; }, 900);
+      setStatus('Opening…');
+      setTimeout(() => { stopListening(); location.href = url; }, 700);   // same tab, like a QR scanner
     }
   }
 
   window.addEventListener('offline', renderNet);
   window.addEventListener('online', () => {
     renderNet();
-    // back online: take the user to the oldest saved link (the others stay listed)
     if (pending.length && $('auto').checked) {
-      const p = pending.shift(); store.set('pulse-pending', pending);
-      setStatus('Back online. Opening your saved link…', '');
-      setTimeout(() => { stopListening(); location.href = p.url; }, 900);
+      const p = pending.shift(); store.set('pulse4-pending', pending);
+      setStatus('Back online. Opening saved link…');
+      setTimeout(() => { stopListening(); location.href = p.url; }, 700);
     }
   });
 
-  let starting = false;
   async function startListening() {
-    if (starting || node) return;
-    starting = true;
     const ac = audio();
     try {
       stream = await navigator.mediaDevices.getUserMedia({
-        // the browser's voice processing would treat our tones as noise and filter them out
-        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },   // voice filters would remove the tones
       });
     } catch (e) {
-      starting = false;
-      setStatus(D ? 'No microphone access. Check a microphone is connected and allowed in your system privacy settings.'
-        : location.protocol === 'https:' || location.hostname === 'localhost'
-        ? 'Microphone permission was denied' : 'Microphone needs https:// (or localhost)', 'err');
+      setStatus(location.protocol === 'https:' || location.hostname === 'localhost' ? 'Microphone blocked' : 'Microphone needs https', true);
       return;
     }
-    starting = false;
     mic = ac.createMediaStreamSource(stream);
-    // ScriptProcessor gives us raw samples on the main thread; simple and works everywhere
-    node = ac.createScriptProcessor(2048, 1, 1);
-    decoder = new P.Decoder(ac.sampleRate, {
-      onFrame: (lv, tone) => {
-        frames.push({ lv: Float32Array.from(lv), tone });
-        if (frames.length > 600) frames.splice(0, frames.length - 600);   // nothing draws while the window is hidden
-      },
-      onProgress: (done, total) => {
-        setStatus(total ? `Receiving… ${Math.round(done / total * 100)}%` : 'Receiving…', '');
-        setProgress(total ? done / total : 0.02);
+    node = ac.createScriptProcessor(4096, 1, 1);
+    decoder = new P.MultiDecoder(ac.sampleRate, {
+      onFrame: (mode, lv, tone) => { if (mode === visMode) frames.push({ lv: Float32Array.from(lv), tone }); },
+      onDetect: mode => { if (mode !== visMode) { visMode = mode; initWaterfall(); } },
+      onProgress: (done, total, mode) => {
+        visMode = mode;
+        setStatus(`Receiving · ${P.MODES[mode].label} · ${Math.round(done / total * 100)}%`);
+        setProgress(done / total);
       },
       onMessage,
-      onError: () => { setStatus('Too noisy that time. Keeping what I heard and combining it with the next repeat…', 'err'); setProgress(0); },
-    });
+      onError: () => { setStatus('Missed it. Waiting for the next repeat…', true); setProgress(0); },
+    }, VISIBLE);
     node.onaudioprocess = e => decoder.push(e.inputBuffer.getChannelData(0));
     mic.connect(node);
-    // ScriptProcessor only runs when connected to the output; route through a muted gain
     const mute = ac.createGain(); mute.gain.value = 0;
     node.connect(mute); mute.connect(ac.destination);
     initWaterfall();
-    setStatus('Listening…', ''); setProgress(0);
-    $('listen').textContent = 'Stop listening'; $('listen').classList.add('stop');
+    setStatus('Listening…'); setProgress(0);
+    $('listen').textContent = 'Stop'; $('listen').classList.add('on');
     const loop = () => { drawWaterfall(); if (node) requestAnimationFrame(loop); };
     loop();
-    if (D) D.setListening(true);
   }
 
   function stopListening() {
@@ -301,35 +323,24 @@
     if (mic) { mic.disconnect(); mic = null; }
     if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
     decoder = null; frames = [];
-    $('listen').textContent = 'Start listening'; $('listen').classList.remove('stop');
-    if (!$('status').classList.contains('err')) setStatus('Microphone off', '');
-    if (D) D.setListening(false);
+    $('listen').textContent = 'Listen'; $('listen').classList.remove('on');
+    if ($('status').textContent.startsWith('Listening')) setStatus('Microphone off');
   }
-
   $('listen').onclick = () => (node ? stopListening() : startListening());
 
   // ---------- init ----------
   const params = new URLSearchParams(location.search);
   if (params.get('url')) $('url').value = params.get('url');
-  let tab = params.get('mode');
-  if (!tab) { try { tab = localStorage.getItem('pulse-tab'); } catch (e) {} }
+  if (P.MODES[params.get('sound')]) settings.mode = params.get('sound');
+  let tab = params.get('mode') || store.get('pulse4-tab', 'send');
+  if (pending.length && navigator.onLine) tab = 'recv';
   show(tab === 'recv' ? 'recv' : 'send');
-  updateSendMeta();
+  for (const b of $('mode').children) b.setAttribute('aria-pressed', b.dataset.v === settings.mode);
+  update();
   renderHistory(); renderNet();
-  // saved links from an earlier offline session: if we're online now, send the user to Receive to see them
-  if (pending.length && navigator.onLine) show('recv');
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
-  if (D) {
-    // desktop app: links are saved and listed, never opened automatically. Start on Receive, already listening
-    $('auto').closest('label').style.display = 'none';
-    $('history').hidden = true;
-    D.onLinksChanged(renderSaved);
-    D.listLinks().then(renderSaved);
-    D.onToggleListening(() => { if (node) stopListening(); else { show('recv'); startListening(); } });
-    show('recv');
-    startListening();
-  }
   window.addEventListener('resize', () => { drawScore(null); if (wctx) initWaterfall(); });
+  matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => { drawScore(null); if (wctx) initWaterfall(); });
 })();

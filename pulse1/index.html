@@ -3,125 +3,144 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pulse</title>
+<title>Pulse4</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-192.png">
-<meta name="theme-color" content="#0b0d12">
+<meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#111111" media="(prefers-color-scheme: dark)">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <style>
   :root {
-    --bg: #0b0d12; --panel: #141821; --line: #252b38; --text: #e8ebf2; --muted: #8b93a7;
-    --accent: #5eead4; --accent2: #a78bfa; --bad: #f87171; --good: #4ade80;
+    --bg: #fafafa; --fg: #111; --muted: #737373; --line: #e4e4e4; --field: #fff; --soft: #f0f0f0; --bad: #b42318;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111; --fg: #ededed; --muted: #8f8f8f; --line: #2a2a2a; --field: #181818; --soft: #1e1e1e; --bad: #f97066; color-scheme: dark; }
   }
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
-  main { max-width: 560px; margin: 0 auto; padding: 24px 16px 48px; }
-  header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
-  header h1 { font-size: 28px; margin: 0; letter-spacing: -0.02em; }
-  header p { margin: 0; color: var(--muted); font-size: 14px; }
-  .logo { width: 40px; height: 40px; border-radius: 12px; background: linear-gradient(135deg, var(--accent), var(--accent2)); display: grid; place-items: center; }
-  .tabs { display: grid; grid-template-columns: 1fr 1fr; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 4px; margin-bottom: 16px; }
-  .tabs button { background: none; border: 0; color: var(--muted); padding: 10px; border-radius: 9px; font: inherit; font-weight: 600; cursor: pointer; }
-  .tabs button.on { background: var(--line); color: var(--text); }
-  section { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 20px; }
-  section[hidden] { display: none; }
-  label { display: block; font-size: 13px; color: var(--muted); margin: 0 0 6px; }
-  input[type=text], select { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 12px; font: inherit; }
-  input[type=text]:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
-  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
-  .check { display: flex; align-items: center; gap: 8px; margin-top: 14px; color: var(--muted); font-size: 14px; }
-  .big { width: 100%; margin-top: 18px; padding: 16px; border: 0; border-radius: 12px; font: inherit; font-weight: 700; font-size: 17px; cursor: pointer;
-         background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #0b0d12; }
-  .big.stop { background: var(--line); color: var(--text); }
-  .big:disabled { opacity: .5; cursor: default; }
-  .meta { color: var(--muted); font-size: 13px; margin-top: 10px; min-height: 1.5em; }
-  .err { color: var(--bad); }
-  canvas { display: block; width: 100%; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; margin-top: 16px; }
-  .status { margin-top: 14px; font-weight: 600; }
-  .bar { height: 6px; background: var(--bg); border-radius: 3px; overflow: hidden; margin-top: 8px; }
-  .bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .1s; }
-  .result { margin-top: 16px; padding: 16px; border: 1px solid var(--good); border-radius: 12px; background: rgba(74,222,128,.07); }
-  .result[hidden], .result a.open[hidden] { display: none; }
-  .result .url { word-break: break-all; font-family: ui-monospace, Menlo, monospace; font-size: 14px; }
-  .result a.open { display: inline-block; margin-top: 12px; padding: 10px 16px; border-radius: 10px; background: var(--good); color: #0b0d12; font-weight: 700; text-decoration: none; }
-  ul.history { list-style: none; padding: 0; margin: 14px 0 0; font-size: 13px; }
-  ul.history li { padding: 6px 0; border-top: 1px solid var(--line); word-break: break-all; }
-  ul.history a { color: var(--accent); }
-  .net { margin-left: auto; padding: 4px 10px; border-radius: 999px; background: rgba(248,113,113,.15); color: var(--bad); font-size: 12px; font-weight: 700; }
-  .net[hidden] { display: none; }
-  .pending { margin-top: 16px; padding: 16px; border: 1px solid var(--accent2); border-radius: 12px; background: rgba(167,139,250,.08); }
-  .pending[hidden] { display: none; }
-  .pending b { display: block; margin-bottom: 8px; }
-  .pending ul { list-style: none; margin: 0; padding: 0; }
-  .pending li { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid var(--line); font-size: 14px; }
-  .pending li > :first-child { flex: 1; word-break: break-all; color: var(--text); }
-  .pending button { border: 0; border-radius: 8px; padding: 6px 12px; font: inherit; font-weight: 700; background: var(--accent2); color: #0b0d12; cursor: pointer; }
-  .pending button:disabled { opacity: .4; cursor: default; }
-  .pending button.ghost { background: none; color: var(--muted); font-weight: 500; }
-  .pending a { color: var(--accent); }
-  footer { margin-top: 20px; color: var(--muted); font-size: 12px; text-align: center; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; }
+  main { max-width: 480px; margin: 0 auto; padding: 28px 20px 56px; }
+
+  header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 28px; }
+  h1 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+  #net { font-size: 13px; color: var(--muted); }
+
+  nav { display: flex; gap: 24px; border-bottom: 1px solid var(--line); margin-bottom: 28px; }
+  nav button { background: none; border: 0; padding: 0 0 10px; margin-bottom: -1px; font: inherit; font-weight: 500; color: var(--muted); border-bottom: 1.5px solid transparent; cursor: pointer; }
+  nav button[aria-selected=true] { color: var(--fg); border-color: var(--fg); }
+
+  section[hidden], [hidden] { display: none !important; }
+  .field { margin-bottom: 20px; }
+  .label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+  input[type=text] { width: 100%; padding: 11px 12px; font: inherit; color: var(--fg); background: var(--field); border: 1px solid var(--line); border-radius: 8px; }
+  input[type=text]:focus { outline: none; border-color: var(--fg); }
+
+  .seg { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--field); }
+  .seg button { flex: 1; padding: 9px 4px; font: inherit; font-size: 14px; color: var(--muted); background: none; border: 0; border-left: 1px solid var(--line); cursor: pointer; }
+  .seg button:first-child { border-left: 0; }
+  .seg button[aria-pressed=true] { color: var(--fg); background: var(--soft); font-weight: 500; }
+  .hint { font-size: 13px; color: var(--muted); margin-top: 8px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+  .check { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); margin: 4px 0 20px; }
+  .check input { accent-color: var(--fg); width: 16px; height: 16px; margin: 0; }
+
+  .primary { width: 100%; padding: 13px; font: inherit; font-weight: 500; color: var(--bg); background: var(--fg); border: 1px solid var(--fg); border-radius: 8px; cursor: pointer; }
+  .primary.on { color: var(--fg); background: transparent; }
+  .primary:disabled { opacity: .4; cursor: default; }
+  .meta { font-size: 13px; color: var(--muted); margin-top: 10px; min-height: 19px; font-variant-numeric: tabular-nums; }
+  .meta.err, .status.err { color: var(--bad); }
+
+  canvas { display: block; width: 100%; margin-top: 20px; border-radius: 6px; background: var(--soft); }
+
+  .qr { display: flex; gap: 16px; align-items: center; margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--line); }
+  .qr button { flex: none; width: 104px; height: 104px; padding: 6px; background: #fff; border: 1px solid var(--line); border-radius: 6px; cursor: zoom-in; }
+  .qr svg { display: block; width: 100%; height: 100%; }
+  .qr p { margin: 0; font-size: 14px; color: var(--muted); }
+  .qr p b { display: block; color: var(--fg); font-weight: 500; }
+  .overlay { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; background: rgba(0,0,0,.8); cursor: zoom-out; }
+  .overlay div { width: min(86vw, 86vh); aspect-ratio: 1; padding: 4%; background: #fff; border-radius: 10px; }
+
+  .status { margin-top: 16px; font-size: 14px; }
+  .bar { height: 2px; background: var(--line); margin-top: 10px; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--fg); transition: width .1s; }
+
+  .result { margin-top: 24px; padding: 16px; border: 1px solid var(--fg); border-radius: 8px; }
+  .result .url { font-size: 14px; word-break: break-all; }
+  .result a { display: inline-block; margin-top: 12px; font-weight: 500; color: var(--fg); }
+
+  h2 { margin: 32px 0 6px; font-size: 13px; font-weight: 500; color: var(--muted); }
+  ul.list { list-style: none; margin: 0; padding: 0; font-size: 14px; }
+  ul.list li { display: flex; gap: 12px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--line); }
+  ul.list li > :first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--fg); }
+  ul.list button { padding: 0; font: inherit; font-size: 13px; color: var(--fg); background: none; border: 0; text-decoration: underline; cursor: pointer; }
+  ul.list button:disabled { color: var(--muted); text-decoration: none; cursor: default; }
+  ul.list button.quiet { color: var(--muted); }
 </style>
 </head>
 <body>
 <main>
   <header>
-    <div class="logo" aria-hidden="true">
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#0b0d12" stroke-width="2.5" stroke-linecap="round"><path d="M2 12h4l3-8 6 16 3-8h4"/></svg>
-    </div>
-    <div><h1>Pulse</h1><p>A QR code you can hear.</p></div>
-    <span id="net" class="net" hidden>Offline</span>
+    <h1>Pulse4</h1>
+    <span id="net" hidden>Offline</span>
   </header>
 
-  <nav class="tabs" role="tablist">
-    <button id="tab-send" class="on" role="tab">Send</button>
-    <button id="tab-recv" role="tab">Receive</button>
+  <nav role="tablist">
+    <button id="tab-send" role="tab" aria-selected="true">Send</button>
+    <button id="tab-recv" role="tab" aria-selected="false">Receive</button>
   </nav>
 
   <section id="send">
-    <label for="url">Website to send</label>
-    <input id="url" type="text" value="https://durhack.com" autocomplete="off" spellcheck="false">
-    <div class="row">
-      <div>
-        <label for="speed">Speed</label>
-        <select id="speed"></select>
-      </div>
-      <div>
-        <label for="vol">Volume</label>
-        <select id="vol"><option value="0.25">Low</option><option value="0.5">Medium</option><option value="0.9" selected>High</option></select>
-      </div>
+    <div class="field">
+      <label class="label" for="url">Link</label>
+      <input id="url" type="text" value="https://durhack.com" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="url">
     </div>
-    <label class="check"><input id="loop" type="checkbox" checked> Repeat until stopped</label>
-    <button id="play" class="big">Play sound</button>
+    <div class="field" id="modeField">
+      <span class="label">Sound</span>
+      <div class="seg" id="mode"></div>
+    </div>
+    <div class="field">
+      <span class="label">Speed</span>
+      <div class="seg" id="speed"></div>
+      <div class="hint" id="modeHint"></div>
+    </div>
+    <label class="check"><input id="melody" type="checkbox" checked> Play Für Elise with it</label>
+    <button id="play" class="primary">Play</button>
     <div id="sendMeta" class="meta"></div>
-    <canvas id="score" data-h="120"></canvas>
+    <canvas id="score" data-h="140"></canvas>
+    <div id="qr" class="qr">
+      <button id="qrBtn" type="button" aria-label="Show QR code full screen"></button>
+      <p><b>Or scan</b>Same link, for anyone without a phone to listen. Tap to enlarge.</p>
+    </div>
   </section>
 
   <section id="recv" hidden>
-    <button id="listen" class="big">Start listening</button>
-    <canvas id="spec" data-h="140"></canvas>
+    <button id="listen" class="primary">Listen</button>
+    <canvas id="spec" data-h="120"></canvas>
     <div id="status" class="status">Microphone off</div>
     <div class="bar"><i id="prog"></i></div>
-    <label class="check"><input id="auto" type="checkbox" checked> Open the website automatically</label>
+    <label class="check" style="margin-top:16px"><input id="auto" type="checkbox" checked> Open links automatically</label>
+    <label class="check" style="margin-top:-12px"><input id="needMelody" type="checkbox" checked> Only accept links played with Für Elise</label>
     <div id="result" class="result" hidden>
-      <div class="meta" style="margin:0 0 4px">Received</div>
       <div id="resUrl" class="url"></div>
-      <a id="resOpen" class="open" target="_blank" rel="noopener noreferrer">Open website</a>
+      <div id="resMelody" class="hint"></div>
+      <a id="resOpen" target="_blank" rel="noopener noreferrer">Open</a>
     </div>
-    <div id="pending" class="pending" hidden>
-      <b id="pendingTitle"></b>
-      <ul id="pendingList"></ul>
+    <div id="pending" hidden>
+      <h2 id="pendingTitle"></h2>
+      <ul id="pendingList" class="list"></ul>
     </div>
-    <div id="saved" class="pending" hidden>
-      <b id="savedTitle"></b>
-      <ul id="savedList"></ul>
+    <div id="recent" hidden>
+      <h2>Recent</h2>
+      <ul id="history" class="list"></ul>
     </div>
-    <ul id="history" class="history"></ul>
   </section>
-
-  <footer>Tones 3.0–5.6 kHz · turn the volume up · in a loud room hold the devices 10–50 cm apart or use Slow</footer>
 </main>
 
+<div id="qrFull" class="overlay" hidden><div></div></div>
+<script src="vendor/qrcode.js"></script>
 <script src="pulse.js"></script>
 <script src="app.js"></script>
 </body>
