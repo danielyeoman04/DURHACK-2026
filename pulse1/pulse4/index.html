@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pulse4</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#111111" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<style>
+  :root {
+    --bg: #fafafa; --fg: #111; --muted: #737373; --line: #e4e4e4; --field: #fff; --soft: #f0f0f0; --bad: #b42318;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111; --fg: #ededed; --muted: #8f8f8f; --line: #2a2a2a; --field: #181818; --soft: #1e1e1e; --bad: #f97066; color-scheme: dark; }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; }
+  main { max-width: 480px; margin: 0 auto; padding: 28px 20px 56px; }
+
+  header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 28px; }
+  h1 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+  #net { font-size: 13px; color: var(--muted); }
+
+  nav { display: flex; gap: 24px; border-bottom: 1px solid var(--line); margin-bottom: 28px; }
+  nav button { background: none; border: 0; padding: 0 0 10px; margin-bottom: -1px; font: inherit; font-weight: 500; color: var(--muted); border-bottom: 1.5px solid transparent; cursor: pointer; }
+  nav button[aria-selected=true] { color: var(--fg); border-color: var(--fg); }
+
+  section[hidden], [hidden] { display: none !important; }
+  .field { margin-bottom: 20px; }
+  .label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+  input[type=text] { width: 100%; padding: 11px 12px; font: inherit; color: var(--fg); background: var(--field); border: 1px solid var(--line); border-radius: 8px; }
+  input[type=text]:focus { outline: none; border-color: var(--fg); }
+
+  .seg { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--field); }
+  .seg button { flex: 1; padding: 9px 4px; font: inherit; font-size: 14px; color: var(--muted); background: none; border: 0; border-left: 1px solid var(--line); cursor: pointer; }
+  .seg button:first-child { border-left: 0; }
+  .seg button[aria-pressed=true] { color: var(--fg); background: var(--soft); font-weight: 500; }
+  .hint { font-size: 13px; color: var(--muted); margin-top: 8px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+  .check { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); margin: 4px 0 20px; }
+  .check input { accent-color: var(--fg); width: 16px; height: 16px; margin: 0; }
+
+  .primary { width: 100%; padding: 13px; font: inherit; font-weight: 500; color: var(--bg); background: var(--fg); border: 1px solid var(--fg); border-radius: 8px; cursor: pointer; }
+  .primary.on { color: var(--fg); background: transparent; }
+  .primary:disabled { opacity: .4; cursor: default; }
+  .meta { font-size: 13px; color: var(--muted); margin-top: 10px; min-height: 19px; font-variant-numeric: tabular-nums; }
+  .meta.err, .status.err { color: var(--bad); }
+
+  canvas { display: block; width: 100%; margin-top: 20px; border-radius: 6px; background: var(--soft); }
+
+  .qr { display: flex; gap: 16px; align-items: center; margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--line); }
+  .qr button { flex: none; width: 104px; height: 104px; padding: 6px; background: #fff; border: 1px solid var(--line); border-radius: 6px; cursor: zoom-in; }
+  .qr svg { display: block; width: 100%; height: 100%; }
+  .qr p { margin: 0; font-size: 14px; color: var(--muted); }
+  .qr p b { display: block; color: var(--fg); font-weight: 500; }
+  .overlay { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; background: rgba(0,0,0,.8); cursor: zoom-out; }
+  .overlay div { width: min(86vw, 86vh); aspect-ratio: 1; padding: 4%; background: #fff; border-radius: 10px; }
+
+  .status { margin-top: 16px; font-size: 14px; }
+  .bar { height: 2px; background: var(--line); margin-top: 10px; }
+  .bar i { display: block; height: 100%; width: 0; background: var(--fg); transition: width .1s; }
+
+  .result { margin-top: 24px; padding: 16px; border: 1px solid var(--fg); border-radius: 8px; }
+  .result .url { font-size: 14px; word-break: break-all; }
+  .result a { display: inline-block; margin-top: 12px; font-weight: 500; color: var(--fg); }
+
+  h2 { margin: 32px 0 6px; font-size: 13px; font-weight: 500; color: var(--muted); }
+  ul.list { list-style: none; margin: 0; padding: 0; font-size: 14px; }
+  ul.list li { display: flex; gap: 12px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--line); }
+  ul.list li > :first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; color: var(--fg); }
+  ul.list button { padding: 0; font: inherit; font-size: 13px; color: var(--fg); background: none; border: 0; text-decoration: underline; cursor: pointer; }
+  ul.list button:disabled { color: var(--muted); text-decoration: none; cursor: default; }
+  ul.list button.quiet { color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Pulse4</h1>
+    <span id="net" hidden>Offline</span>
+  </header>
+
+  <nav role="tablist">
+    <button id="tab-send" role="tab" aria-selected="true">Send</button>
+    <button id="tab-recv" role="tab" aria-selected="false">Receive</button>
+  </nav>
+
+  <section id="send">
+    <div class="field">
+      <label class="label" for="url">Link</label>
+      <input id="url" type="text" value="https://durhack.com" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="url">
+    </div>
+    <div class="field" id="modeField">
+      <span class="label">Sound</span>
+      <div class="seg" id="mode"></div>
+    </div>
+    <div class="field">
+      <span class="label">Speed</span>
+      <div class="seg" id="speed"></div>
+      <div class="hint" id="modeHint"></div>
+    </div>
+    <label class="check"><input id="melody" type="checkbox" checked> Play Für Elise with it</label>
+    <button id="play" class="primary">Play</button>
+    <div id="sendMeta" class="meta"></div>
+    <canvas id="score" data-h="140"></canvas>
+    <div id="qr" class="qr">
+      <button id="qrBtn" type="button" aria-label="Show QR code full screen"></button>
+      <p><b>Or scan</b>Same link, for anyone without a phone to listen. Tap to enlarge.</p>
+    </div>
+  </section>
+
+  <section id="recv" hidden>
+    <button id="listen" class="primary">Listen</button>
+    <canvas id="spec" data-h="120"></canvas>
+    <div id="status" class="status">Microphone off</div>
+    <div class="bar"><i id="prog"></i></div>
+    <label class="check" style="margin-top:16px"><input id="auto" type="checkbox" checked> Open links automatically</label>
+    <label class="check" style="margin-top:-12px"><input id="needMelody" type="checkbox" checked> Only accept links played with Für Elise</label>
+    <div id="result" class="result" hidden>
+      <div id="resUrl" class="url"></div>
+      <div id="resMelody" class="hint"></div>
+      <a id="resOpen" target="_blank" rel="noopener noreferrer">Open</a>
+    </div>
+    <div id="pending" hidden>
+      <h2 id="pendingTitle"></h2>
+      <ul id="pendingList" class="list"></ul>
+    </div>
+    <div id="recent" hidden>
+      <h2>Recent</h2>
+      <ul id="history" class="list"></ul>
+    </div>
+  </section>
+</main>
+
+<div id="qrFull" class="overlay" hidden><div></div></div>
+<script src="vendor/qrcode.js"></script>
+<script src="pulse.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
