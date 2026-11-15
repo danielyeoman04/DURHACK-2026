@@ -1,7 +1,7 @@
 {
   "name": "pulse-desktop",
   "productName": "Pulse",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Pulse: a QR code you can hear. Desktop app that listens in the background and saves the links it hears.",
   "author": "DurHack 2026 Pulse team",
   "private": true,
@@ -20,21 +20,11 @@
     "files": [
       "main.js",
       "preload.js",
-      {
-        "from": "../pulse1",
-        "to": "pulse1",
-        "filter": [
-          "index.html",
-          "app.js",
-          "pulse.js",
-          "icon.svg",
-          "icon-192.png",
-          "icon-512.png"
-        ]
-      }
+      "offline.html",
+      "assets/**"
     ],
     "win": {
-      "icon": "../pulse1/icon-512.png",
+      "icon": "assets/icon-512.png",
       "target": [
         "nsis",
         "portable"
@@ -47,7 +37,7 @@
       "artifactName": "Pulse-Portable-${version}.${ext}"
     },
     "mac": {
-      "icon": "../pulse1/icon-512.png",
+      "icon": "assets/icon-512.png",
       "category": "public.app-category.utilities",
       "target": [
         "dmg"

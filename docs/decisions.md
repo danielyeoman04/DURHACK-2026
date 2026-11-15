@@ -11,6 +11,7 @@
 ## Index
 | ID | Title | Status | Date |
 |----|-------|--------|------|
+| D-002 | Desktop app is a thin wrapper around the hosted web app | Accepted | 2026-11-15 |
 | D-001 | Desktop app: Electron wrapper around pulse1, built locally | Accepted | 2026-11-14 |
 
 ---
@@ -30,6 +31,15 @@ Copy this block to the top of the log, below this line, for each new decision.
 ```
 
 ---
+
+### D-002: Desktop app is a thin wrapper around the hosted web app
+- **Date:** 2026-11-15
+- **Status:** Accepted (changes the "loads `pulse1/index.html` / `if (D)` branches" part of D-001)
+- **Decided by:** Daniel
+- **Context:** pulse1 changes constantly; the desktop hooks inside `pulse1/app.js` were lost in a repo reorganisation and the desktop app silently stopped saving links.
+- **Decision:** `desktop/` loads the hosted app by URL and adds only background running, saved links, notifications and offline fallback. It reads the page's DOM from `preload.js`; pulse1 contains no desktop code.
+- **Alternatives considered:** hooks inside pulse1 (breaks whenever pulse1 changes); bundling a copy of pulse1 (goes stale).
+- **Consequences:** the hosted URL must be live; first launch needs internet (afterwards the service worker caches it). If pulse1 renames `#listen`, `#resUrl` or `#auto`, saving stops until `desktop/preload.js` is updated.
 
 ### D-001: Desktop app: Electron wrapper around pulse1, built locally
 - **Date:** 2026-11-14
