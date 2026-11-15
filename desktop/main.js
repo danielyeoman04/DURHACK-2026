@@ -1,7 +1,7 @@
 /*
- * Pulse desktop shell. A thin wrapper around the hosted Pulse web app (pulse1). It adds only what a
- * web page can't do: keep listening when the window is closed (tray icon), save every link it hears
- * to a file, notify, and open links in the default browser only when the user asks.
+ * Pulse desktop shell. Loads the pulse1 web app in a window, keeps it listening when the
+ * window is closed (tray icon), saves every link it hears to a file, and opens links in the
+ * default browser only when the user asks.
  */
 const { app, BrowserWindow, Tray, Menu, Notification, ipcMain, shell, session, nativeImage,
         systemPreferences, powerSaveBlocker } = require('electron');
@@ -18,17 +18,10 @@ const START_HIDDEN = !!process.env.PULSE_START_HIDDEN;
 
 // lets the page start the microphone at launch, without waiting for a click
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
-// keep the page (and its microphone decoder) running at full speed while the window is hidden or covered.
-// Windows otherwise treats a hidden/occluded window as backgrounded and throttles it.
-app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
-app.commandLine.appendSwitch('disable-renderer-backgrounding');
-app.commandLine.appendSwitch('disable-background-timer-throttling');
-app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 
-// The hosted web app. PULSE_URL overrides it (e.g. http://localhost:8000 while developing pulse1).
-const PULSE_URL = process.env.PULSE_URL || 'https://danielyeoman04.github.io/DURHACK-2026/';
-const START_URL = new URL(PULSE_URL); START_URL.searchParams.set('mode', 'recv');   // open on Receive
-const ASSETS = path.join(__dirname, 'assets');
+// packaged: pulse1 is copied next to main.js. From source: it is the sibling folder.
+const WEB_DIR = [path.join(__dirname, 'pulse1'), path.join(__dirname, '..', 'pulse1')]
+  .find(d => fs.existsSync(path.join(d, 'index.html')));
 const MAX_LINKS = 500;
 
 let win = null, tray = null, quitting = false, listening = false, blocker = null, toldAboutTray = false;
@@ -88,7 +81,7 @@ function shortUrl(url) {
 
 function notify(title, body, onClick) {
   if (!Notification.isSupported()) return;
-  const n = new Notification({ title, body, icon: path.join(ASSETS, 'icon-192.png') });
+  const n = new Notification({ title, body, icon: path.join(WEB_DIR, 'icon-192.png') });
   liveNotifications.add(n);
   const done = () => liveNotifications.delete(n);
   n.on('click', () => { done(); if (onClick) onClick(); });
@@ -97,8 +90,6 @@ function notify(title, body, onClick) {
 }
 
 // ---------- window ----------
-function loadApp() { win.loadURL(START_URL.href); }
-
 function showWindow() {
   if (!win) return;
   if (win.isMinimized()) win.restore();
@@ -110,7 +101,7 @@ function createWindow() {
     width: 620, height: 860, minWidth: 380, minHeight: 500,
     show: false,
     backgroundColor: '#0b0d12',
-    icon: path.join(ASSETS, 'icon-512.png'),
+    icon: path.join(WEB_DIR, 'icon-512.png'),
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -119,19 +110,12 @@ function createWindow() {
       backgroundThrottling: false,    // keep decoding at full speed while the window is hidden
     },
   });
-  loadApp();
-  // unreachable (offline and never cached): show a local page with a retry button
-  win.webContents.on('did-fail-load', (_e, code, _d, url, isMainFrame) => {
-    if (isMainFrame && code !== -3 && url.startsWith('http')) win.loadFile(path.join(__dirname, 'offline.html'));
-  });
+  win.loadFile(path.join(WEB_DIR, 'index.html'));
   win.once('ready-to-show', () => { if (!START_HIDDEN) win.show(); });
 
   // the window only ever shows the Pulse page. Every link goes to the default browser instead.
   win.webContents.setWindowOpenHandler(({ url }) => { openLink(url); return { action: 'deny' }; });
-  win.webContents.on('will-navigate', (e, url) => {
-    if (url.startsWith('file:') || new URL(url).origin === START_URL.origin) return;   // our own page
-    e.preventDefault(); openLink(url);
-  });
+  win.webContents.on('will-navigate', (e, url) => { e.preventDefault(); openLink(url); });
 
   // closing the window hides it and Pulse keeps listening. Quit is in the tray menu.
   win.on('close', e => {
@@ -152,7 +136,7 @@ function createWindow() {
 let iconOn = null, iconOff = null;
 function makeTrayIcons() {
   const size = process.platform === 'darwin' ? 18 : 32;
-  iconOn = nativeImage.createFromPath(path.join(ASSETS, 'icon-192.png')).resize({ width: size, height: size });
+  iconOn = nativeImage.createFromPath(path.join(WEB_DIR, 'icon-192.png')).resize({ width: size, height: size });
   // paused icon: the same picture, faded
   const s = iconOn.getSize(), bmp = Buffer.from(iconOn.toBitmap());
   for (let i = 0; i < bmp.length; i++) bmp[i] = bmp[i] * 0.4;
@@ -183,7 +167,6 @@ if (!app.requestSingleInstanceLock()) {
   app.on('activate', showWindow);            // macOS dock icon
   app.on('window-all-closed', () => {});     // stay alive in the tray
 
-  ipcMain.on('app:retry', () => { if (win) loadApp(); });
   ipcMain.handle('links:list', () => links);
   ipcMain.handle('links:add', (_e, url) => addLink(url));
   ipcMain.handle('links:remove', (_e, url) => removeLink(url));
