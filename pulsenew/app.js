@@ -445,6 +445,10 @@
     else setStatus('Your browser blocked the new tab. Tap Open, or allow pop-ups for this site.', true);
   }
 
+  // auto-open is off by default, so a prank link only shows up and never opens by itself
+  $('auto').checked = store.get('pulse10-auto', false) === true;
+  $('auto').addEventListener('change', () => store.set('pulse10-auto', $('auto').checked));
+
   window.addEventListener('offline', renderNet);
   window.addEventListener('online', () => {
     renderNet();

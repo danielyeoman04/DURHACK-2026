@@ -1,5 +1,5 @@
 // Offline support: cache the whole app on install, serve it cache-first, refresh in the background.
-const CACHE = 'pulse10-v3';
+const CACHE = 'pulse10-v4';
 const FILES = ['./', 'index.html', 'app.js', 'pulse.js', 'vendor/qrcode.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png', 'apple-touch-icon.png'];
 
 self.addEventListener('install', e => {
