@@ -16,3 +16,7 @@
 
 # Add stuff here to improve
 # get rid of fur elise
+
+# DEMO
+
+# make sure app is easy to run, make steps to install and run easier
