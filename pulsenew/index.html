@@ -97,6 +97,15 @@
   .result { margin-top: 24px; padding: 16px; border: 1px solid var(--fg); border-radius: 8px; }
   .result .url { font-size: 14px; word-break: break-all; }
   .result a { display: inline-block; margin-top: 12px; font-weight: 500; color: var(--fg); }
+  .result .sign { margin-top: 8px; font-size: 14px; }
+  .result button.link { display: block; margin-top: 8px; font-size: 14px; }
+
+  /* Secure tab: fingerprint words */
+  .words { margin-bottom: 4px; font-size: 22px; font-weight: 600; letter-spacing: -0.01em; overflow-wrap: anywhere; }
+  .qrwords { font-size: 15px; font-weight: 600; text-align: center; }
+  .stage.full .qrwords { font-size: clamp(18px, 3.2vmin, 38px); color: #111; }
+  ul.list li a { color: inherit; }
+  ul.list .by { display: block; font-size: 12px; color: var(--muted); }
 
   h2 { margin: 32px 0 6px; font-size: 13px; font-weight: 500; color: var(--muted); }
   ul.list { list-style: none; margin: 0; padding: 0; font-size: 14px; }
@@ -146,6 +155,7 @@
     <button id="tab-send" role="tab" aria-selected="true">Send</button>
     <button id="tab-recv" role="tab" aria-selected="false">Receive</button>
     <button id="tab-qr" role="tab" aria-selected="false">QR</button>
+    <button id="tab-secure" role="tab" aria-selected="false">Secure</button>
   </nav>
 
   <section id="send">
@@ -185,6 +195,7 @@
     <div id="stage" class="stage" title="Tap to leave full screen">
       <div id="qrBig" class="qrbig"></div>
       <div id="qrLink" class="qrlink"></div>
+      <div id="qrWords" class="qrwords"></div>
       <div id="qrNow" class="qrnow"></div>
     </div>
     <p id="qrEmpty" class="hint" hidden></p>
@@ -193,6 +204,21 @@
       <button id="play2" class="primary on">Play sound</button>
     </div>
     <div class="hint">Full screen for a projector. The sound keeps playing.</div>
+  </section>
+
+  <section id="secure" hidden>
+    <label class="check" style="margin-bottom:8px"><input id="signOn" type="checkbox"> Sign my pulses</label>
+    <div class="hint" id="signHint" style="margin:0 0 24px"></div>
+    <div id="identity" class="field">
+      <span class="label">Your fingerprint words</span>
+      <div id="myWords" class="words">…</div>
+      <div class="hint">Put these words on your slides. Receivers see them next to every link you sign, so the room can check a pulse is really yours. The QR tab shows them when signing is on.</div>
+      <button id="newId" class="link" type="button">New identity</button>
+    </div>
+    <h2 class="settings">Receiving</h2>
+    <div id="lockState" class="hint" style="margin-top:0"></div>
+    <button id="unlock" class="link" type="button" hidden>Unlock</button>
+    <div class="hint" style="margin-top:24px">Signing proves who sent a link. It doesn’t hide the link: anyone nearby can still read it.</div>
   </section>
 
   <section id="recv" hidden>
@@ -204,9 +230,13 @@
     <div id="status" class="status">Microphone off</div>
     <div class="bar"><i id="prog"></i></div>
     <label class="check" style="margin-top:16px"><input id="auto" type="checkbox"> Open links automatically in a new tab</label>
+    <div id="recvLock" class="hint" hidden></div>
     <div id="result" class="result" hidden>
       <div id="resUrl" class="url"></div>
+      <div id="resSign" class="sign" hidden></div>
       <div id="resMelody" class="hint"></div>
+      <button id="resLock" class="link" type="button" hidden>Lock to this sender</button>
+      <button id="resUnlock" class="link" type="button" hidden>Unlock</button>
       <a id="resOpen" target="_blank" rel="noopener noreferrer">Open</a>
     </div>
     <div id="pending" hidden>
@@ -222,6 +252,8 @@
 
 <script src="vendor/qrcode.js"></script>
 <script src="pulse.js"></script>
+<script src="vendor/bip39-english.js"></script>
+<script src="secure.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

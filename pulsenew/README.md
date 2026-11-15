@@ -14,6 +14,7 @@ versions are in `../pulse1` and `../pulsearchive`.
 | **Send** | Paste a link and press **Play**. The sound loops until you press it again. The chart shows the tones of every part on top and, with music on, the notes of the piece underneath. |
 | **Receive** | Tap the logo to start listening. A heard link is shown with an **Open** button. Tick "Open links automatically" to open links in a new tab instead. It is off by default, so a prank link can't open by itself. A signal meter shows the strength in dB (weak / good / strong). Heard links go into **Recent**. Links heard while offline are saved and open when you're back online. |
 | **QR** | Opens full screen for a projector. The sound keeps playing, so a room can scan or listen. |
+| **Secure** | **Sign my pulses** proves a pulse came from your device, and shows your four fingerprint words. Receivers can lock to one sender. See [Signed pulses](#signed-pulses). |
 
 Send settings (saved per device):
 
@@ -55,15 +56,17 @@ Every message begins with a **format byte**:
 | `0` | Raw UTF-8 text | `hello world`: 11 chars, 12 bytes |
 | `1`–`5` | A packed link. The byte gives the prefix (`1` none, `2` `https://`, `3` `https://www.`, `4` `http://`, `5` `http://www.`). After it come 6-bit codes: `a–z 0–9 ./-_?=&%#:~+`, common chunks (`.com`, `.co.uk`, `durhack`, `youtube`, `watch?v=`…), `62` = next letter is a capital, `63` = one raw byte follows | YouTube link: 43 chars, 16 bytes |
 | `6` | A quick code: the next byte indexes `QUICK`, the list of links built into the app | `https://durhack.com/`: 2 bytes |
+| `7` | **Signed**: public key, time, a normal message (`0`–`6`), then a signature. See [Signed pulses](#signed-pulses) | `https://durhack.com/`: 103 bytes |
+| `8` | Reserved for a later key-announcement message (signed plays would then carry a 4-byte key id). Not built | |
 | `10` | **Live** ("room only"): a 4-byte timestamp (seconds since 2026-01-01 UTC), then a normal message. The receiver rejects it if it is more than 30 s old, so a recording played back later doesn't work. The engine and receiver support it, but the UI has no way to send one | |
 
-Format bytes `7`–`9` and `11`–`255` are unused. `packMessage` uses whichever of quick code, packed link or
+Format bytes `9` and `11`–`255` are unused. `packMessage` uses whichever of quick code, packed link or
 plain text is shortest, and keeps a packed link only if it unpacks back to exactly the same text.
 
 `QUICK` must be the same in every copy of the app, in the same order. Only ever add to the end of it.
 
 The receiver passes plain messages to the app as text. A message whose format byte `isSpecial()` recognises
-(currently only Live) is passed as raw bytes in `info.special`, and `onMessage` in `app.js` decides what to do with it.
+(Signed and Live) is passed as raw bytes in `info.special`, and `onMessage` in `app.js` decides what to do with it.
 
 ### 2. Parts and packets (`splitParts`, `buildPacket`)
 
@@ -94,7 +97,7 @@ One **play** is every part back to back, with a 120 ms gap between parts. The ap
 | `https://www.youtube.com/watch?v=dQw4w9WgXcQ` | 16 | 1 | 5.1 s | 8.7 s |
 | 300-character link | 218 | 7 | 48.7 s | 85.0 s |
 
-The app warns when one play is longer than 20 s.
+The app warns when one play is longer than 20 s (40 s for a signed play).
 
 ### 4. Receiving (`Decoder`, `MultiDecoder`)
 
@@ -124,6 +127,55 @@ The piece number is in the header. The receiver checks that the melody notes wer
 (`checkMelody`), and reports "Played with …". The music is decoration and a provenance check only. The link
 decodes without it.
 
+## Signed pulses
+
+Anyone in a lecture hall can play a pulse, so a receiver can't tell the lecturer's link from a prank. With
+**Sign my pulses** on (Secure tab, off by default), every pulse proves which device sent it. This is
+**signing, not secrecy**: anyone nearby can still read the link. It works fully offline.
+
+```
+[7] [public key: 32] [time: 4] [inner message: n] [signature: 64]
+```
+
+- **public key**: the sender's raw Ed25519 public key. It is in every play, so a new listener needs only one play.
+- **time**: big-endian uint32, seconds since 2026-01-01 UTC, set when Play is pressed (the same for every loop).
+- **inner message**: exactly what `packMessage` returns (format byte `0`–`6`).
+- **signature**: Ed25519 over `utf8("pulse-signed-v1") ‖ [7] ‖ public key ‖ time ‖ inner message`.
+
+The key pair is made by WebCrypto the first time the Secure tab is opened and kept in IndexedDB. The private
+key is non-extractable: it never leaves the device, and not even the app's own code can read its bytes.
+**New identity** replaces the pair.
+
+**Fingerprint words.** A receiver shows the sender as four words, for example `maple-river-otter-lamp`. They
+are the first 44 bits of `SHA-256(public key)`, as four 11-bit indexes into the BIP-39 English word list
+(`vendor/bip39-english.js`). The lecturer puts their words on a slide, and the QR tab shows them under the QR
+code while signing is on. 44 bits is enough against someone messing about in a lecture, but **not against a
+determined attacker**: with a GPU farm, someone could search for a key with the same four words.
+
+**Lock.** A receiver that hears a signed link can **Lock to this sender**. The lock is that sender's public key
+(not the words), kept in `localStorage`. While locked, unsigned links and links signed by anyone else are not
+shown and not added to Recent. **Unlock** is in the result box and in the Secure tab.
+
+| Heard | Receiver shows |
+|---|---|
+| Good signature, not locked | The link, "Signed by *words*", and **Lock to this sender** |
+| Good signature, locked to that key | The link, "Signed by *words* ✓" |
+| Locked, and the link is unsigned or from another key | Nothing. Status: "Ignored a link not from *words*" |
+| Bad signature | Nothing. Status: "Rejected a link with a bad signature" |
+| More than 12 hours old, or more than 5 minutes in the future | Nothing. Rejected as a replay or a wrong clock |
+| The browser has no Ed25519 | The link, marked "Signature not checked". It never opens automatically |
+
+A signed message is 101 bytes longer, so a play is about 21 s longer. Fast speed, no music:
+
+| Link | Unsigned | Signed |
+|---|---|---|
+| `https://durhack.com/` (quick code) | 3.7 s, 1 part | 25.0 s, 4 parts |
+| YouTube link | 5.1 s, 1 part | 26.7 s, 4 parts |
+
+Limits: signing can't separate two senders playing at the same time (it only checks packets that already
+decoded), and a recording of a signed pulse can be replayed for 12 hours. A replay can only repeat a link the
+sender really sent.
+
 ## Range: simulated, not measured
 
 `node test/range.test.js` models a lecture hall: the direct sound falls 6 dB per doubling of distance,
@@ -146,10 +198,12 @@ Tried and dropped: LoRa-style chirps. In these simulations they helped against n
 | File | What's in it |
 |---|---|
 | `pulse.js` | The engine. Modes, CRC, whitening, Reed-Solomon, link packing, Live messages, packet building, synthesis, music, `Decoder`, `MultiDecoder`, `safeUrl`. |
-| `app.js` | UI: tabs, Send settings, `is.gd` shortening (JSONP), play loop and score chart, QR / full screen, mic and receive flow, history, offline queue. |
+| `secure.js` | Signed pulses: key storage (IndexedDB), fingerprint words, `signMessage`, `readSigned`. Browser (`window.PulseSecure`) and Node. |
+| `app.js` | UI: tabs, the Secure tab and sender lock, Send settings, `is.gd` shortening (JSONP), play loop and score chart, QR / full screen, mic and receive flow, history, offline queue. |
 | `index.html` | Markup and all the CSS. Light and dark themes come from `prefers-color-scheme`. |
 | `sw.js` | Service worker. It caches the app on install, serves it cache-first, and refreshes in the background. |
 | `vendor/qrcode.js` | qrcode-generator by Kazuhiko Arase (MIT). |
+| `vendor/bip39-english.js` | The BIP-39 English word list (MIT), for fingerprint words. |
 | `test/` | Node tests. Each one synthesises a play, runs it through a simulated room, and decodes it. |
 
 ## Hidden extras
@@ -165,9 +219,10 @@ python3 -m http.server 8000      # the mic and offline mode need https or localh
 node test/decode.test.js         # 15 loopback cases: reverb, babble, music, whistle, white noise, 44.1/48 kHz, drift (~9 min)
 node test/melody.test.js         # 30 cases: the melody check accepts the right piece and rejects others
 node test/pack.test.js           # link packing round-trips, plus 20,000 random strings
+node test/secure.test.js         # signed pulses: round-trip, tampering, wrong key, age limits, words, room loopback (~1 min)
 node test/range.test.js          # the simulated hall above (a few minutes)
 ```
 
 Netlify serves this folder as a static site, with no build step. **When you change any cached file, bump `CACHE`
-in `sw.js`** (currently `pulse10-v4`). Otherwise installed copies keep serving the old version until the
+in `sw.js`** (currently `pulse10-v5`). Otherwise installed copies keep serving the old version until the
 service worker updates.

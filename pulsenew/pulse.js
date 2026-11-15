@@ -334,7 +334,8 @@
     const t = ((bytes[1] << 24) | (bytes[2] << 16) | (bytes[3] << 8) | bytes[4]) >>> 0;
     return { text: unpackMessage(bytes.slice(5)), ageS: (now - EPOCH_2026) / 1000 - t };
   }
-  const isSpecial = bytes => bytes[0] === LIVE;
+  const SIGNED = 7;   // [7, key32, t4, inner.., sig64]: a signed message; secure.js builds and checks it
+  const isSpecial = bytes => bytes[0] === LIVE || bytes[0] === SIGNED;
 
   /** Split text into balanced parts; each part becomes one packet. */
   function splitParts(text, payload = null) {
@@ -1064,7 +1065,7 @@
 
   const Pulse = {
     MODES, DEFAULT_MODE, DEFAULT_SPEED, MAX_PAYLOAD,
-    encode, encodeParts, renderPlay, playMs, playLayout, PART_BYTES, synthesize, synthesizeMelody, checkMelody, packetMs, PIECES, pieceName, noteLen, rankPieces, fitCost, pieceMs, layoutFor, partLens, melodyHeard, durationMs, Decoder, MultiDecoder, safeUrl, utf8Encode, crc16, packMessage, unpackMessage, QUICK, LIVE, LIVE_GRACE_S, liveMessage, readLive, isSpecial, headerBytes,
+    encode, encodeParts, renderPlay, playMs, playLayout, PART_BYTES, synthesize, synthesizeMelody, checkMelody, packetMs, PIECES, pieceName, noteLen, rankPieces, fitCost, pieceMs, layoutFor, partLens, melodyHeard, durationMs, Decoder, MultiDecoder, safeUrl, utf8Encode, crc16, packMessage, unpackMessage, QUICK, LIVE, SIGNED, EPOCH_2026, LIVE_GRACE_S, liveMessage, readLive, isSpecial, headerBytes,
     rs: { encode: rsEncode, decode: rsDecode }, _prep: prepare, _bits: { bytesToSymbols, symbolsToBytes },
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = Pulse;

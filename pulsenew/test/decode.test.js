@@ -59,8 +59,9 @@ function room(x, sr, echoes = [[0.011, 0.5], [0.023, 0.35], [0.041, 0.25], [0.06
 }
 
 /** snrDb: signal RMS vs noise RMS over the whole recording (broadband, like a real room) */
-function trial(text, mode, speed, { snrDb = 100, noise = 'babble', sr = 48000, txSr = 48000, drift = 1, plays = 2, echo = true, chunk = 2048 }) {
-  const pkts = P.encodeParts(text, { mode, speed });
+function trial(text, mode, speed, { snrDb = 100, noise = 'babble', sr = 48000, txSr = 48000, drift = 1, plays = 2, echo = true, chunk = 2048, payload = null, music: piece } = {}) {
+  const enc = { mode, speed }; if (payload) enc.payload = payload; if (piece !== undefined) enc.music = piece;
+  const pkts = P.encodeParts(payload ? null : text, enc);
   let one = P.renderPlay(pkts, txSr);
   one = Float32Array.from({ length: one.length + Math.round(txSr * 0.6) }, (_, i) => one[i] || 0);
   one = resample(one, sr / txSr * drift);
@@ -74,10 +75,12 @@ function trial(text, mode, speed, { snrDb = 100, noise = 'babble', sr = 48000, t
     const g = sig / rms(nz) / Math.pow(10, snrDb / 20);
     for (let i = 0; i < n; i++) x[i] += nz[i] * g;
   }
-  const got = [], modes = [];
-  const d = new P.MultiDecoder(sr, { onMessage: (m, md) => { got.push(m); modes.push(md); } });
+  const got = [], modes = [], specials = [];
+  const d = new P.MultiDecoder(sr, { onMessage: (m, md, info) => { got.push(m); modes.push(md); specials.push(info && info.special ? Array.from(info.special) : null); } });
   for (let i = 0; i < n; i += chunk) d.push(x.subarray(i, i + chunk));
-  return { ok: got.length > 0 && got.every(m => m === text) && modes.every(md => md === (mode || 'standard')), count: got.length, secs: P.playMs(pkts) / 1000 };
+  const same = sp => !!sp && sp.length === payload.length && sp.every((b, i) => b === payload[i]);
+  const right = payload ? specials.every(same) : got.every(m => m === text);
+  return { ok: got.length > 0 && right && modes.every(md => md === (mode || 'standard')), count: got.length, secs: P.playMs(pkts) / 1000, specials };
 }
 function addAll(a, b) { const ra = rms(a), rb = rms(b); for (let i = 0; i < a.length; i++) a[i] = a[i] / ra + b[i] / rb; return a; }
 
