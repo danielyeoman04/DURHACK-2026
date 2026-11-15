@@ -6,5 +6,6 @@
 
 
 # Online app
-## Encryption and robustness work
-
+## Add chime when first start sending pulse
+## About tab
+## What's up with the thing about being too long (switch to "shorter pulse recommended"c)
