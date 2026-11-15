@@ -19,10 +19,12 @@
 
   // ---------- tabs ----------
   function show(which) {
-    for (const t of ['send', 'recv', 'qr']) $('tab-' + t).setAttribute('aria-selected', which === t);
+    for (const t of ['send', 'recv', 'qr', 'secure']) $('tab-' + t).setAttribute('aria-selected', which === t);
     $('send').hidden = which !== 'send';
     $('recv').hidden = which !== 'recv';
     $('qrtab').hidden = which !== 'qr';
+    $('secure').hidden = which !== 'secure';
+    if (which === 'secure') ensureKeys();
     if (which === 'recv') stopPlaying();   // the sound keeps going on the QR tab, so a projector can show both
     if (which !== 'recv') stopListening();
     if (which !== 'qr') unproject();
@@ -31,6 +33,7 @@
   }
   $('tab-send').onclick = () => show('send');
   $('tab-recv').onclick = () => show('recv');
+  $('tab-secure').onclick = () => show('secure');
   $('tab-qr').onclick = () => { show('qr'); project(); };   // the tab click counts as the gesture full screen needs
 
   function sizeCanvas(c) {
@@ -161,7 +164,10 @@
 
   let shuffle = 0;
   const MAX_PLAY_S = 20;     // one pulse should stay under this; shortening long links keeps it there
+  const MAX_SIGNED_S = 40;   // a signed pulse carries 101 more bytes (about 21 s at the fast speed)
   $('another').onclick = () => { shuffle++; if (source) stopPlaying(); update(); };
+
+  const encodeOpts = () => ({ mode: settings.mode, speed: settings.speed, music: musicOpt(), shuffle });
 
   function update() {
     $('modeHint').textContent = HINTS[settings.mode];
@@ -171,7 +177,11 @@
     }
     try {
       const text = sendText();
-      parts = P.encodeParts(text, { mode: settings.mode, speed: settings.speed, music: musicOpt(), shuffle });
+      parts = P.encodeParts(text, encodeOpts());   // also throws for an empty or oversized link
+      // signed: the real bytes are made when Play is pressed (signing is async). This stand-in has the same
+      // length and the same first part, so the time, the chart and the piece of music come out the same.
+      const signed = signing();
+      if (signed) parts = P.encodeParts(null, { ...encodeOpts(), payload: [P.SIGNED, ...keys.publicRaw, 0, 0, 0, 0, ...P.packMessage(text), ...new Array(64).fill(0)] });
       segs = parts[0];
       const quick = P.QUICK.indexOf(text) >= 0;
       $('linkHint').textContent = quick ? 'Built-in link: sent as a tiny code.'
@@ -181,8 +191,9 @@
       const pc = P.PIECES[segs.piece], natural = pc ? pc.steps * pc.natural : 0;
       const tempo = !pc ? '' : one * 1000 > natural * 1.15 ? ', played a little slower' : one * 1000 < natural * 0.85 ? ', played a little faster' : '';
       $('musicHint').textContent = !name ? '' : `${name} (${pc.composer})${tempo}.`;
-      const over = one > MAX_PLAY_S;
+      const over = one > (signed ? MAX_SIGNED_S : MAX_PLAY_S);
       $('sendMeta').textContent = `${fmt(one)} per pulse` + (parts.length > 1 ? ` · ${parts.length} parts` : '') +
+        (signed ? ' · signed (signed pulses take longer)' : '') +
         (over ? ` · too long: ${wantsShort(typed) && !navigator.onLine ? 'go online to shorten it' : 'use a shorter link'}` : '');
       $('sendMeta').classList.toggle('err', over);
       $('another').hidden = !musicOn;
@@ -214,6 +225,7 @@
     if (source) { stopPlaying(); update(); return; }
     const ac = audio();   // inside the tap, so the browser allows sound
     const typed = $('url').value.trim();
+    if (signOn) await ensureKeys();   // never play unsigned just because the key was still loading
     if (wantsShort(typed) && navigator.onLine) {
       const pending = requestShort(typed);
       if (pending && typeof pending.then === 'function') {
@@ -226,6 +238,13 @@
     const m = P.MODES[settings.mode];
     if (m.freqs[m.freqs.length - 1] > ac.sampleRate * 0.47) {
       $('sendMeta').textContent = 'This device can’t play this sound.'; $('sendMeta').classList.add('err'); return;
+    }
+    if (signing()) {   // sign now: the time in the message is the moment Play was pressed, the same for every loop
+      let bytes;
+      try { bytes = await S.signMessage(sendText(), keys, Date.now()); }
+      catch (e) { $('sendMeta').textContent = 'Couldn’t sign this pulse.'; $('sendMeta').classList.add('err'); return; }
+      if (source) return;
+      parts = P.encodeParts(null, { ...encodeOpts(), payload: bytes }); segs = parts[0];
     }
     startSound(P.renderPlay(parts, ac.sampleRate));
   }
@@ -296,6 +315,7 @@
     $('qrEmpty').textContent = 'Type a link on Send first.';
     $('qrBig').innerHTML = svg || '';
     $('qrLink').textContent = svg ? text.replace(/^https?:\/\//, '') : '';
+    $('qrWords').textContent = svg && signing() ? `Signed by ${myWords}` : '';
     $('stage').hidden = !svg; $('qrEmpty').hidden = !!svg; $('project').disabled = !svg;
   }
   // projector view: the browser's full screen where it exists (laptops, Android), a full-window view otherwise (iPhone)
@@ -359,7 +379,11 @@
   function renderHistory() {
     $('recent').hidden = history.length === 0;
     $('history').replaceChildren(...history.map((h, i) => {
-      const li = document.createElement('li'); li.appendChild(linkEl(h.text, P.safeUrl(h.text)));
+      const li = document.createElement('li'), link = linkEl(h.text, P.safeUrl(h.text));
+      if (h.words) {   // a signed link: show who signed it
+        const box = document.createElement('div'), by = document.createElement('span');
+        by.className = 'by'; by.textContent = `Signed by ${h.words}`; box.append(link, by); li.appendChild(box);
+      } else li.appendChild(link);
       const bin = document.createElement('button'); bin.type = 'button'; bin.className = 'bin';
       bin.title = 'Delete'; bin.setAttribute('aria-label', 'Delete ' + h.text);
       bin.innerHTML = BIN_SVG;
@@ -390,12 +414,93 @@
   function onMessage(text, mode, info) {
     const heard = !!(info && info.melody && info.melody.heard), name = heard ? info.melody.name : '';
     const b = info && info.special;
+    if (b && b[0] === P.SIGNED) { onSigned(b, mode, name); return; }
+    if (lock) { ignored(); return; }   // locked to one sender: unsigned links are not shown
     if (!b) { accept(text, mode, name); return; }
     if (b[0] === P.LIVE) {   // a room-only link (the engine still understands them): refuse recordings
       let r; try { r = P.readLive(b); } catch (e) { return; }
       if (Math.abs(r.ageS) > P.LIVE_GRACE_S) { setStatus('Heard an old recording of a room-only link. Ignored.', true); setProgress(0); return; }
       accept(r.text, mode, name, 'Room only, heard live');
     }
+  }
+
+  // ---------- secure: signed pulses (secure.js) ----------
+  // Sender: "Sign my pulses" adds this device's public key and a signature to every pulse. Receiver: a signed
+  // link shows the sender's fingerprint words, and "Lock" then hides every link that isn't from that sender.
+  const S = window.PulseSecure;
+  let signOn = store.get('pulse10-sign', false) === true, keys = null, myWords = '', keysReady = null, canSign = null;
+  let lock = store.get('pulse10-lock', null), lockWords = '', lastSig = null;   // lock: the sender's public key, base64
+  if (typeof lock !== 'string') lock = null;
+  const b64 = raw => btoa(String.fromCharCode(...raw));
+  const signing = () => signOn && !!keys;
+
+  // the key pair is only made (or loaded) once someone opens the Secure tab or has signing on
+  function ensureKeys() {
+    if (!keysReady) keysReady = (async () => {
+      try {
+        if (!S || !(await S.supported())) throw new Error('unsupported');
+        keys = await S.loadOrCreateKeys(); myWords = await S.fingerprint(keys.publicRaw); canSign = true;
+      } catch (e) { keys = null; myWords = ''; canSign = false; }
+      renderSecure(); if (!source) update();
+    })();
+    return keysReady;
+  }
+  function renderSecure() {
+    $('signOn').checked = signing(); $('signOn').disabled = !keys;
+    $('signHint').textContent = canSign === false ? 'This browser can’t sign.' : canSign === null ? '' :
+      signOn ? 'On. Every pulse you send is signed, which makes it about 20 s longer.' : 'Off. Pulses are sent unsigned.';
+    $('signHint').classList.toggle('err', canSign === false);
+    $('identity').hidden = canSign === false;
+    $('myWords').textContent = myWords || '…';
+  }
+  $('signOn').addEventListener('change', () => {
+    signOn = $('signOn').checked; store.set('pulse10-sign', signOn); renderSecure();
+    if (source) stopPlaying(); update();
+  });
+  $('newId').onclick = async () => {
+    if (!keys || !confirm('Make a new identity? Your fingerprint words will change, and anyone locked to you will stop seeing your links.')) return;
+    try { const k = await S.newKeys(), w = await S.fingerprint(k.publicRaw); keys = k; myWords = w; } catch (e) { return; }
+    if (source) stopPlaying();
+    renderSecure(); update();
+  };
+
+  const who = () => lockWords || 'the locked sender';
+  function ignored() { setStatus(`Ignored a link not from ${who()}`, true); setProgress(0); }
+  function renderLock() {
+    $('lockState').textContent = lock ? `Locked to ${who()}. Links from anyone else are ignored.`
+      : 'Not locked. To lock, receive a signed link and choose “Lock to this sender”.';
+    $('unlock').hidden = !lock;
+    $('recvLock').hidden = !lock; $('recvLock').textContent = lock ? `Locked: only links signed by ${who()} are shown.` : '';
+    const s = lastSig, mine = !!s && lock === s.key;
+    $('resSign').hidden = !s;
+    if (s) { const b = document.createElement('b'); b.textContent = s.words; $('resSign').replaceChildren('Signed by ', b, mine ? ' ✓' : ''); }
+    $('resLock').hidden = !s || !!lock; $('resUnlock').hidden = !mine;
+  }
+  function setLock(key, words) {
+    lock = key; lockWords = words || '';
+    if (lock) store.set('pulse10-lock', lock); else { try { localStorage.removeItem('pulse10-lock'); } catch (e) {} }
+    renderLock();
+  }
+  $('resLock').onclick = () => { if (lastSig) setLock(lastSig.key, lastSig.words); };
+  $('resUnlock').onclick = $('unlock').onclick = () => setLock(null);
+  if (lock && S) S.fingerprint(Uint8Array.from(atob(lock), c => c.charCodeAt(0))).then(w => { lockWords = w; renderLock(); }).catch(() => {});
+
+  async function onSigned(b, mode, name) {
+    let r;
+    try { r = await S.readSigned(b); } catch (e) { r = { ok: false, reason: 'malformed' }; }
+    if (r.ok) {
+      const key = b64(r.publicRaw);
+      if (lock && lock !== key) { ignored(); return; }
+      accept(r.text, mode, name, '', { key, words: r.words }); return;
+    }
+    if (r.reason === 'unsupported') {   // this browser has no Ed25519: show it, marked, and never open it automatically
+      if (lock) { ignored(); return; }
+      accept(r.text, mode, name, 'Signature not checked', { unchecked: true }); return;
+    }
+    setProgress(0);
+    setStatus(r.reason === 'old' ? 'Rejected a signed link more than 12 hours old (a replay, or a wrong clock)'
+      : r.reason === 'future' ? 'Rejected a signed link dated in the future (check this device’s clock)'
+      : 'Rejected a link with a bad signature', true);
   }
 
   // ---------- signal meter (range test) ----------
@@ -413,8 +518,11 @@
   // the same link heard again within this long (since it was last heard) counts as a repeat and isn't opened again
   const REPEAT_MS = 5 * 60 * 1000;
 
-  function accept(text, mode, name, note = '') {
-    $('resMelody').innerHTML = [note, name ? `Played with ${name}` : ''].filter(Boolean).join(' · ');
+  // sig: {key, words} for a link with a checked signature, {unchecked: true} for one this browser couldn't check
+  function accept(text, mode, name, note = '', sig = null) {
+    $('resMelody').textContent = [note, name ? `Played with ${name}` : ''].filter(Boolean).join(' · ');
+    const unchecked = !!(sig && sig.unchecked), words = sig && sig.key ? sig.words : '';
+    lastSig = words ? sig : null; renderLock();
     const url = P.safeUrl(text), offline = !navigator.onLine;
     setProgress(1);
     $('result').hidden = false;
@@ -424,15 +532,15 @@
     setStatus(!url ? 'Received text' : offline ? 'Saved. Opens when you’re back online.' : 'Received');
 
     // a repeat of the same pulse (the sender loops until stopped): refresh it, don't open it again
-    if (history[0] && history[0].text === text && Date.now() - history[0].at < REPEAT_MS) { history[0].at = Date.now(); store.set('pulse10-history', history); return; }
-    history.unshift({ text, mode, at: Date.now() }); history.length = Math.min(history.length, 20);
+    if (history[0] && history[0].text === text && (history[0].words || '') === words && Date.now() - history[0].at < REPEAT_MS) { history[0].at = Date.now(); store.set('pulse10-history', history); return; }
+    history.unshift(words ? { text, mode, at: Date.now(), words } : { text, mode, at: Date.now() }); history.length = Math.min(history.length, 20);
     store.set('pulse10-history', history); renderHistory();
     if (navigator.vibrate) navigator.vibrate(60);
     if (!url) return;
     if (offline) {
-      if (!pending.some(p => p.url === url)) { pending.push({ text, url, at: Date.now() }); store.set('pulse10-pending', pending); }
+      if (!pending.some(p => p.url === url)) { pending.push(unchecked ? { text, url, at: Date.now(), noAuto: true } : { text, url, at: Date.now() }); store.set('pulse10-pending', pending); }
       renderPending();
-    } else if ($('auto').checked) {
+    } else if ($('auto').checked && !unchecked) {
       openInNewTab(url);
     }
   }
@@ -452,8 +560,9 @@
   window.addEventListener('offline', renderNet);
   window.addEventListener('online', () => {
     renderNet();
-    if (pending.length && $('auto').checked) {
-      const p = pending.shift(); store.set('pulse10-pending', pending); renderPending();
+    const i = pending.findIndex(p => !p.noAuto);   // a link whose signature couldn't be checked never opens by itself
+    if (i >= 0 && $('auto').checked) {
+      const [p] = pending.splice(i, 1); store.set('pulse10-pending', pending); renderPending();
       openInNewTab(p.url);
     }
   });
@@ -524,7 +633,8 @@
   show(tab === 'recv' ? 'recv' : 'send');
   for (const b of $('mode').children) b.setAttribute('aria-pressed', b.dataset.v === settings.mode);
   update();
-  renderHistory(); renderNet();
+  renderHistory(); renderNet(); renderSecure(); renderLock();
+  if (signOn) ensureKeys();
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
   }
