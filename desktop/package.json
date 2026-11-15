@@ -21,7 +21,8 @@
       "main.js",
       "preload.js",
       "offline.html",
-      "assets/**"
+      "assets/**",
+      "config.json"
     ],
     "win": {
       "icon": "assets/icon-512.png",

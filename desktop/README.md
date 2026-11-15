@@ -10,12 +10,15 @@ The same Pulse app as `../pulse1`, wrapped in Electron so it can run in the back
 - **Never opens a link by itself.** You get a notification when a link arrives. Click the
   notification, the link in the Saved links list, or the tray menu to open it in your default browser.
 
-The desktop app is only a wrapper. It loads the hosted web app (`PULSE_URL` in `main.js`,
-default `https://danielyeoman04.github.io/DURHACK-2026/`) and does not use the files in `../pulse1`.
+The desktop app is only a wrapper. It loads the hosted web app (address in `desktop/config.json`; see below) and does not use the files in `../pulse1`.
 All Pulse behaviour lives in pulse1. The desktop adds: background listening, saving links, notifications,
 the tray, and offline use (the web app's own service worker caches it after the first online launch;
 if it has never loaded, `offline.html` offers a retry). `preload.js` watches the page's elements
 (`#listen`, `#resUrl`, `#auto`) so pulse1 needs no desktop code. It also turns off "Open links automatically".
+
+**Changing the address (no rebuild):** create or edit `%APPDATA%\Pulse\config.json` (Mac: `~/Library/Application Support/Pulse/config.json`)
+containing `{ "url": "https://your-host/" }` and restart Pulse. That file wins over the `desktop/config.json` baked into the installer,
+and the `PULSE_URL` environment variable wins over both. Offline use is per address: a new address needs one online launch.
 
 For development, run pulse1 locally and point the app at it: `PULSE_URL=http://localhost:8000 npm start`.
 

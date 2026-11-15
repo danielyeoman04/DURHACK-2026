@@ -25,9 +25,22 @@ app.commandLine.appendSwitch('disable-renderer-backgrounding');
 app.commandLine.appendSwitch('disable-background-timer-throttling');
 app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 
-// The hosted web app. PULSE_URL overrides it (e.g. http://localhost:8000 while developing pulse1).
-const PULSE_URL = process.env.PULSE_URL || 'https://danielyeoman04.github.io/DURHACK-2026/';
-const START_URL = new URL(PULSE_URL); START_URL.searchParams.set('mode', 'recv');   // open on Receive
+// The hosted web app's address, first match wins:
+//   1. PULSE_URL environment variable (e.g. http://localhost:8000 while developing pulse1)
+//   2. config.json in the app's data folder (%APPDATA%\Pulse\config.json): edit it, no rebuild needed
+//   3. desktop/config.json shipped inside the app
+function readUrl(file) {
+  try { return new URL(JSON.parse(fs.readFileSync(file, 'utf8')).url).href; } catch (e) { return null; }
+}
+let START_URL = null;     // re-read on every (re)load so editing config.json and pressing Try again works
+function resolveStartUrl() {
+  const base = (process.env.PULSE_URL && new URL(process.env.PULSE_URL).href)
+    || readUrl(path.join(app.getPath('userData'), 'config.json'))
+    || readUrl(path.join(__dirname, 'config.json'));
+  if (!base) return null;
+  const u = new URL(base); u.searchParams.set('mode', 'recv');   // open on Receive
+  return u;
+}
 const ASSETS = path.join(__dirname, 'assets');
 const MAX_LINKS = 500;
 
@@ -97,7 +110,11 @@ function notify(title, body, onClick) {
 }
 
 // ---------- window ----------
-function loadApp() { win.loadURL(START_URL.href); }
+function loadApp() {
+  START_URL = resolveStartUrl();
+  if (START_URL) win.loadURL(START_URL.href);
+  else win.loadFile(path.join(__dirname, 'offline.html'));   // no address configured
+}
 
 function showWindow() {
   if (!win) return;
@@ -129,7 +146,7 @@ function createWindow() {
   // the window only ever shows the Pulse page. Every link goes to the default browser instead.
   win.webContents.setWindowOpenHandler(({ url }) => { openLink(url); return { action: 'deny' }; });
   win.webContents.on('will-navigate', (e, url) => {
-    if (url.startsWith('file:') || new URL(url).origin === START_URL.origin) return;   // our own page
+    if (url.startsWith('file:') || (START_URL && new URL(url).origin === START_URL.origin)) return;   // our own page
     e.preventDefault(); openLink(url);
   });
 
