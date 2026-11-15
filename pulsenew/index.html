@@ -3,15 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pulse10</title>
+<title>Pulse</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#111111" media="(prefers-color-scheme: dark)">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <style>
   :root {
+    --beat: 1.6s;   /* one cycle of the "Pulsing" wave and the Receive logo's swell, so they stay in step */
     --bg: #fafafa; --fg: #111; --muted: #737373; --line: #e4e4e4; --field: #fff; --soft: #f0f0f0; --bad: #b42318;
     color-scheme: light;
   }
@@ -24,7 +25,21 @@
   main { max-width: 480px; margin: 0 auto; padding: 28px 20px 56px; }
 
   header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 28px; }
-  h1 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+  h1 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+  h1 .logo { width: 22px; height: 22px; }
+
+  /* Receive: the logo is the listen button, and it beats while listening */
+  .beat { display: flex; flex-direction: column; align-items: center; gap: 14px; width: 100%; padding: 12px 0 4px; font: inherit; font-size: 15px; font-weight: 500; color: var(--fg); background: none; border: 0; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  .beat img { width: 132px; height: 132px; border-radius: 50%; transition: transform .15s; }
+  .beat:hover img { transform: scale(1.03); }
+  .beat:focus-visible img { outline: 2px solid var(--fg); outline-offset: 4px; }
+  /* one smooth swell per wave cycle; it peaks as the "Pulsing" wave crosses the middle of the word */
+  .beat.on img { animation: heartbeat var(--beat) ease-in-out infinite; }
+  @keyframes heartbeat {
+    0%, 55%, 100% { transform: scale(1); }
+    20% { transform: scale(1.1); }
+  }
+  @media (prefers-reduced-motion: reduce) { .beat.on img { animation: none; } }
   #net { font-size: 13px; color: var(--muted); }
 
   nav { display: flex; gap: 24px; border-bottom: 1px solid var(--line); margin-bottom: 28px; }
@@ -94,12 +109,36 @@
   .meter { margin-top: 10px; }
   .meter .bar { height: 4px; margin-top: 0; border-radius: 2px; overflow: hidden; }
   .check-num { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--fg); }
+
+  /* Send tab settings, below the play button and sound chart */
+  h2.settings { margin: 36px 0 20px; padding-bottom: 10px; font-size: 13px; font-weight: 500; color: var(--muted); border-bottom: 1px solid var(--line); }
+  .checks { display: flex; flex-direction: column; gap: 12px; }
+  .checks .check { margin: 0; }
+
+  /* "Pulsing. Click to stop.": a wave of emphasis runs from the P of Pulsing to the p of stop */
+  .wave span { display: inline-block; white-space: pre; animation: wave var(--beat) ease-in-out infinite; animation-delay: calc(var(--i) * 0.045s); }
+  @keyframes wave {
+    0%, 40%, 100% { opacity: .55; transform: none; }
+    12% { opacity: 1; transform: translateY(-2px) scale(1.12); }
+  }
+  @media (prefers-reduced-motion: reduce) { .wave span { animation: none; opacity: 1; } }
+
+  .nudge { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding: 10px 12px; font-size: 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--field); animation: rise .25s ease-out; }
+  .nudge #nudgeSlow { padding: 0; font: inherit; color: var(--fg); background: none; border: 0; text-decoration: underline; cursor: pointer; }
+  .nudge .x { padding: 0 2px; font: inherit; font-size: 18px; line-height: 1; color: var(--muted); background: none; border: 0; cursor: pointer; }
+  @keyframes rise { from { opacity: 0; transform: translateY(4px); } }
+
+  /* recent list: a bin appears on hover (always shown on touch screens) */
+  ul.list button.bin { display: flex; padding: 2px; color: var(--muted); text-decoration: none; opacity: 0; transition: opacity .15s; }
+  ul.list li:hover button.bin, ul.list button.bin:focus-visible { opacity: 1; }
+  ul.list button.bin:hover { color: var(--bad); }
+  @media (hover: none) { ul.list button.bin { opacity: 1; } }
 </style>
 </head>
 <body>
 <main>
   <header>
-    <h1>Pulse10</h1>
+    <h1><img class="logo" src="icon.svg" alt="">Pulse</h1>
     <span id="net" hidden>Offline</span>
   </header>
 
@@ -114,26 +153,32 @@
       <label class="label" for="url">Link</label>
       <input id="url" type="text" value="" placeholder="Paste a link" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="url">
       <div class="hint" id="linkHint"></div>
-      <label class="check" style="margin:12px 0 0"><input id="shorten" type="checkbox" checked> Shorten long links (needs internet)</label>
     </div>
     <div class="field" id="modeField">
       <span class="label">Sound</span>
       <div class="seg" id="mode"></div>
-    </div>
-    <div class="field">
-      <span class="label">Speed</span>
-      <div class="seg" id="speed"></div>
       <div class="hint" id="modeHint"></div>
     </div>
+    <button id="play" class="primary">Play</button>
+    <div id="nudge" class="nudge" role="status" hidden>
+      <span>Not receiving the pulse? Try <button id="nudgeSlow" type="button">slow</button> mode.</span>
+      <button id="nudgeClose" class="x" type="button" aria-label="Dismiss">×</button>
+    </div>
+    <div id="sendMeta" class="meta"></div>
+    <canvas id="score" data-h="140"></canvas>
+
+    <h2 class="settings">Settings</h2>
     <div class="field">
       <span class="label">Music</span>
       <div class="seg" id="music"></div>
       <div class="hint" id="musicHint"></div>
       <button id="another" class="link" type="button" hidden>Another piece</button>
     </div>
-    <button id="play" class="primary">Play</button>
-    <div id="sendMeta" class="meta"></div>
-    <canvas id="score" data-h="140"></canvas>
+    <div class="checks">
+      <label class="check"><input id="slow" type="checkbox"> Slower pulse (tick if struggling to receive)</label>
+      <label class="check"><input id="three" type="checkbox"> Limit pulse to 3 repeats</label>
+      <label class="check"><input id="shorten" type="checkbox" checked> Shorten long links (needs internet)</label>
+    </div>
   </section>
 
   <section id="qrtab" hidden>
@@ -151,12 +196,14 @@
   </section>
 
   <section id="recv" hidden>
-    <button id="listen" class="primary">Listen</button>
-    <canvas id="spec" data-h="120"></canvas>
+    <button id="listen" class="beat" type="button" aria-pressed="false">
+      <img src="icon.svg" alt="">
+      <span id="listenLabel">Click to pulse</span>
+    </button>
     <div class="meter"><div class="bar"><i id="meterBar"></i></div><div id="meterText" class="hint"></div></div>
     <div id="status" class="status">Microphone off</div>
     <div class="bar"><i id="prog"></i></div>
-    <label class="check" style="margin-top:16px"><input id="auto" type="checkbox" checked> Open links automatically</label>
+    <label class="check" style="margin-top:16px"><input id="auto" type="checkbox" checked> Open links automatically in a new tab</label>
     <div id="result" class="result" hidden>
       <div id="resUrl" class="url"></div>
       <div id="resMelody" class="hint"></div>

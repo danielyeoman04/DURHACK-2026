@@ -52,20 +52,31 @@
   // Modes shown in the app (the engine also has 'high' (Pulse3–8's 19–20.5 kHz sound), 'standard', 'child' and
   // 'whale'; add them here to bring them back)
   const VISIBLE = ['loud'];
-  const PLAYS = 5;
+  const NUDGE_AFTER = 3;   // full pulses sent at the fast speed before suggesting the slow one
   const HINTS = {
     standard: 'Clear tones. Best in loud rooms.',
     child: 'Plays a short melody.',
     whale: 'A deep, gliding whale song.',
     high: 'The link plays near-silently at 19–20.5 kHz. Keep devices close.',
-    loud: 'Silent 19.5–20.65 kHz tones at full volume. Fast is shortest; Normal carries further.',
+    loud: 'Silent 19.5–20.65 kHz tones at full volume.',
   };
+  // two speeds in the app: fast (default) and slow (the engine's 'normal' is still decoded, just not offered)
   const settings = store.get('pulse10-send', { mode: VISIBLE[0], speed: 'fast' });
   if (!VISIBLE.includes(settings.mode)) settings.mode = VISIBLE[0];
+  if (settings.speed !== 'slow') settings.speed = 'fast';
   $('modeField').hidden = VISIBLE.length < 2;
   segmented($('mode'), VISIBLE.map(n => [n, P.MODES[n].label]), settings.mode, v => { settings.mode = v; changed(); });
-  segmented($('speed'), [['fast', 'Fast'], ['normal', 'Normal'], ['slow', 'Slow']], settings.speed, v => { settings.speed = v; changed(); });
-  function changed() { store.set('pulse10-send', settings); if (source) stopPlaying(); update(); }
+  $('slow').checked = settings.speed === 'slow';
+  $('slow').addEventListener('change', () => { settings.speed = $('slow').checked ? 'slow' : 'fast'; changed(); });
+  // Pulse 3 times: stop by itself after 3 pulses (a class) instead of looping until stopped
+  const THREE = 3;
+  $('three').checked = settings.three === true;
+  $('three').addEventListener('change', () => { settings.three = $('three').checked; changed(); });
+  // a change while pulsing restarts the pulse with the new setting (the click is the gesture sound needs)
+  function changed() {
+    store.set('pulse10-send', settings); hideNudge();
+    if (source) { stopPlaying(); togglePlay(); } else update();
+  }
 
   // music: off by default. On, a piece is picked to fit the link ("Another piece" steps through the others).
   // The receiver needs no setting: it takes links with or without music.
@@ -149,8 +160,7 @@
 
 
   let shuffle = 0;
-  const MAX_PLAY_S = 20;     // one play should stay under this; shortening long links keeps it there
-  const MAX_TOTAL_S = 180;   // and all 5 plays under 3 minutes (a lecturer shouldn't have to wait)
+  const MAX_PLAY_S = 20;     // one pulse should stay under this; shortening long links keeps it there
   $('another').onclick = () => { shuffle++; if (source) stopPlaying(); update(); };
 
   function update() {
@@ -171,8 +181,8 @@
       const pc = P.PIECES[segs.piece], natural = pc ? pc.steps * pc.natural : 0;
       const tempo = !pc ? '' : one * 1000 > natural * 1.15 ? ', played a little slower' : one * 1000 < natural * 0.85 ? ', played a little faster' : '';
       $('musicHint').textContent = !name ? '' : `${name} (${pc.composer})${tempo}.`;
-      const over = one > MAX_PLAY_S || one * PLAYS > MAX_TOTAL_S;
-      $('sendMeta').textContent = `${fmt(one)} per play, ${PLAYS} plays` + (parts.length > 1 ? ` · ${parts.length} parts` : '') +
+      const over = one > MAX_PLAY_S;
+      $('sendMeta').textContent = `${fmt(one)} per pulse` + (parts.length > 1 ? ` · ${parts.length} parts` : '') +
         (over ? ` · too long: ${wantsShort(typed) && !navigator.onLine ? 'go online to shorten it' : 'use a shorter link'}` : '');
       $('sendMeta').classList.toggle('err', over);
       $('another').hidden = !musicOn;
@@ -192,7 +202,7 @@
   function stopPlaying() {
     if (source) { try { source.stop(); } catch (e) {} source = null; }
     cancelAnimationFrame(raf);
-    $('play').textContent = 'Play'; $('play').classList.remove('on'); $('play').disabled = false;
+    $('play').textContent = 'Play'; $('play').classList.remove('on', 'wave'); $('play').disabled = false;
     $('play2').textContent = 'Play sound'; $('qrNow').textContent = '';
     if (parts) segs = parts[0];
     drawScore(null);
@@ -217,39 +227,56 @@
     if (m.freqs[m.freqs.length - 1] > ac.sampleRate * 0.47) {
       $('sendMeta').textContent = 'This device can’t play this sound.'; $('sendMeta').classList.add('err'); return;
     }
-    startSound([P.renderPlay(parts, ac.sampleRate)], PLAYS);
+    startSound(P.renderPlay(parts, ac.sampleRate));
   }
 
-  // plays: one or more rendered plays (all the same length), played back to back, the whole set `loops` times
-  function startSound(plays, loops) {
-    const ac = audio(), len = plays[0].length;
-    const buf = ac.createBuffer(1, len * plays.length, ac.sampleRate);
-    plays.forEach((x, k) => buf.copyToChannel(x, 0, k * len));
-    const total = plays.length * loops;
-    source = ac.createBufferSource();
-    source.buffer = buf; source.loop = loops > 1;
+  // "Pulsing. Click to stop." with each character in its own span, so the CSS wave can run along it
+  function waveLabel(el, text) {
+    el.replaceChildren(...[...text].map((ch, i) => { const s = document.createElement('span'); s.textContent = ch; s.style.setProperty('--i', i); return s; }));
+    el.classList.add('wave');
+  }
+
+  // one rendered pulse, looped until stopped
+  function startSound(play) {
+    const ac = audio(), len = play.length;
+    const buf = ac.createBuffer(1, len, ac.sampleRate);
+    buf.copyToChannel(play, 0, 0);
+    const me = source = ac.createBufferSource();
+    source.buffer = buf; source.loop = true;
     source.connect(ac.destination);
-    source.onended = () => { stopPlaying(); update(); };
+    source.onended = () => {
+      if (source !== me) return;   // a stopped old pulse must not stop a new one
+      stopPlaying(); update();
+      if (settings.three && settings.speed === 'fast' && !nudged) showNudge();   // 3 pulses done: suggest slow if they missed it
+    };
     playStart = ac.currentTime + 0.05; playDur = len / ac.sampleRate;
     source.start(playStart);
-    source.stop(playStart + playDur * total);
+    if (settings.three) source.stop(playStart + playDur * THREE);
     $('play').classList.add('on'); $('play').disabled = false;
+    waveLabel($('play'), 'Pulsing. Click to stop.');
+    $('play2').textContent = 'Stop sound';
     const { starts } = P.playLayout(parts);
     segs = parts[0];
     const tick = () => {
-      if (!source) return;
-      const el = Math.max(0, ac.currentTime - playStart), n = Math.min(total, Math.floor(el / playDur) + 1), tms = (el % playDur) * 1000;
+      if (source !== me) return;
+      const el = Math.max(0, ac.currentTime - playStart), n = Math.floor(el / playDur) + 1, tms = (el % playDur) * 1000;
       let k = 0; while (k + 1 < parts.length && tms >= starts[k + 1]) k++;
       if (segs !== parts[k]) segs = parts[k];
-      $('play').textContent = `Stop · ${n}/${total}` + (parts.length > 1 ? ` · part ${k + 1}/${parts.length}` : '');
-      $('play2').textContent = 'Stop sound';
       const name = P.pieceName(segs.piece);
-      $('qrNow').textContent = `Playing ${n}/${total}` + (name ? ` · ${name}` : '') + ' · listen or scan';
+      $('qrNow').textContent = `Pulse ${n}` + (name ? ` · ${name}` : '') + ' · listen or scan';
+      if (!settings.three && n > NUDGE_AFTER && settings.speed === 'fast' && !nudged) showNudge();
       drawScore(Math.min(1, tms / (playDur * 1000)));
       raf = requestAnimationFrame(tick);
     };
     tick();
   }
+
+  // after NUDGE_AFTER full fast pulses, suggest the slow one (once per page, and never while already slow)
+  let nudged = false;
+  function showNudge() { nudged = true; $('nudge').hidden = false; }
+  function hideNudge() { $('nudge').hidden = true; }
+  $('nudgeClose').onclick = hideNudge;
+  $('nudgeSlow').onclick = () => { $('slow').checked = true; $('slow').dispatchEvent(new Event('change')); };
 
   // ---------- QR code (bundled library, works offline) ----------
   function qrSvg(text) {
@@ -294,13 +321,15 @@
   function setProgress(f) { $('prog').style.width = (f * 100).toFixed(1) + '%'; }
 
   function initWaterfall() {
-    const c = $('spec'); const { g, w, h } = sizeCanvas(c);
+    const c = $('spec'); if (!c) return;   // the waterfall canvas is optional (the Receive tab shows the logo instead)
+    const { g, w, h } = sizeCanvas(c);
     g.fillStyle = css('--soft'); g.fillRect(0, 0, w, h);
     wctx = { g, w, h };
   }
 
   function drawWaterfall() {
-    if (!wctx || !frames.length) return;
+    if (!wctx) { frames = []; return; }
+    if (!frames.length) return;
     const { g, w, h } = wctx, colW = 2, dpr = window.devicePixelRatio || 1;
     const list = frames.slice(-Math.ceil(w / colW)); frames = [];
     const shift = Math.min(w, list.length * colW);
@@ -329,8 +358,17 @@
   }
   function renderHistory() {
     $('recent').hidden = history.length === 0;
-    $('history').replaceChildren(...history.map(h => { const li = document.createElement('li'); li.appendChild(linkEl(h.text, P.safeUrl(h.text))); return li; }));
+    $('history').replaceChildren(...history.map((h, i) => {
+      const li = document.createElement('li'); li.appendChild(linkEl(h.text, P.safeUrl(h.text)));
+      const bin = document.createElement('button'); bin.type = 'button'; bin.className = 'bin';
+      bin.title = 'Delete'; bin.setAttribute('aria-label', 'Delete ' + h.text);
+      bin.innerHTML = BIN_SVG;
+      bin.onclick = () => { history.splice(i, 1); store.set('pulse10-history', history); renderHistory(); };
+      li.appendChild(bin);
+      return li;
+    }));
   }
+  const BIN_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/></svg>';
   function renderPending() {
     const online = navigator.onLine;
     $('pending').hidden = pending.length === 0;
@@ -372,6 +410,9 @@
       `Signal ${Math.round(db)} dB · ${db >= METER.good ? 'strong' : db >= METER.ok ? 'good' : 'weak'}`;
   }
 
+  // the same link heard again within this long (since it was last heard) counts as a repeat and isn't opened again
+  const REPEAT_MS = 5 * 60 * 1000;
+
   function accept(text, mode, name, note = '') {
     $('resMelody').innerHTML = [note, name ? `Played with ${name}` : ''].filter(Boolean).join(' · ');
     const url = P.safeUrl(text), offline = !navigator.onLine;
@@ -382,7 +423,8 @@
     if (url) $('resOpen').href = url;
     setStatus(!url ? 'Received text' : offline ? 'Saved. Opens when you’re back online.' : 'Received');
 
-    if (history[0] && history[0].text === text && Date.now() - history[0].at < 60000) return;   // a repeat of the same sound
+    // a repeat of the same pulse (the sender loops until stopped): refresh it, don't open it again
+    if (history[0] && history[0].text === text && Date.now() - history[0].at < REPEAT_MS) { history[0].at = Date.now(); store.set('pulse10-history', history); return; }
     history.unshift({ text, mode, at: Date.now() }); history.length = Math.min(history.length, 20);
     store.set('pulse10-history', history); renderHistory();
     if (navigator.vibrate) navigator.vibrate(60);
@@ -391,18 +433,24 @@
       if (!pending.some(p => p.url === url)) { pending.push({ text, url, at: Date.now() }); store.set('pulse10-pending', pending); }
       renderPending();
     } else if ($('auto').checked) {
-      setStatus('Opening…');
-      setTimeout(() => { stopListening(); location.href = url; }, 700);   // same tab, like a QR scanner
+      openInNewTab(url);
     }
+  }
+
+  // Opens in a new tab and keeps listening in this one. Browsers block tabs opened without a tap unless the
+  // site is allowed pop-ups, so a blocked open falls back to the Open link.
+  function openInNewTab(url) {
+    const w = window.open(url, '_blank');
+    if (w) { try { w.opener = null; } catch (e) {} setStatus(node ? 'Opened in a new tab. Still listening…' : 'Opened in a new tab.'); }
+    else setStatus('Your browser blocked the new tab. Tap Open, or allow pop-ups for this site.', true);
   }
 
   window.addEventListener('offline', renderNet);
   window.addEventListener('online', () => {
     renderNet();
     if (pending.length && $('auto').checked) {
-      const p = pending.shift(); store.set('pulse10-pending', pending);
-      setStatus('Back online. Opening saved link…');
-      setTimeout(() => { stopListening(); location.href = p.url; }, 700);
+      const p = pending.shift(); store.set('pulse10-pending', pending); renderPending();
+      openInNewTab(p.url);
     }
   });
 
@@ -442,7 +490,7 @@
     node.connect(mute); mute.connect(ac.destination);
     initWaterfall();
     setStatus('Listening…'); setProgress(0);
-    $('listen').textContent = 'Stop'; $('listen').classList.add('on');
+    listenUi(true);
     const loop = () => { drawWaterfall(); drawMeter(); if (node) requestAnimationFrame(loop); };
     loop();
   }
@@ -452,8 +500,14 @@
     if (mic) { mic.disconnect(); mic = null; }
     if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
     decoder = null; frames = []; meterDb = 0; drawMeter();
-    $('listen').textContent = 'Listen'; $('listen').classList.remove('on');
+    listenUi(false);
     if ($('status').textContent.startsWith('Listening')) setStatus('Microphone off');
+  }
+  // the logo button: beats with a "Pulsing" wave while listening, "Click to pulse" otherwise
+  function listenUi(on) {
+    $('listen').classList.toggle('on', on); $('listen').setAttribute('aria-pressed', on);
+    if (on) waveLabel($('listenLabel'), 'Pulsing');
+    else { $('listenLabel').textContent = 'Click to pulse'; $('listenLabel').classList.remove('wave'); }
   }
   $('listen').onclick = () => (node ? stopListening() : startListening());
 
